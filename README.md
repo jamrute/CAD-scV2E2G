@@ -72,7 +72,7 @@ circular-permutation test detects planted enrichment, and that the scV2E2G map c
 | Coronary artery Multiome (snRNA + snATAC) | GEO GSE328800 |
 | Coronary artery Hi-C | GEO GSE328970 |
 | Genotypes | dbGaP phs004118.v1.p1 |
-| Arrayed Perturb-seq | GEO (pending) |
+| Arrayed Perturb-seq | GEO GSE347104 |
 | HCASMC CTCF ChIP-seq | GEO GSE319778 |
 | H3K27ac ChIP-seq and HiChIP | GEO GSE282556, GSE282557 |
 | AMOTL2 knockdown bulk RNA-seq | GEO GSE329169 |
