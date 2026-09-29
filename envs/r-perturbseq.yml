@@ -1,0 +1,22 @@
+name: cad-r-perturbseq
+channels: [conda-forge, bioconda]
+dependencies:
+  - r-base=4.6            # TODO confirm from sessionInfo()
+  - r-remotes
+  - r-yaml
+  - r-data.table
+  - r-r.utils          # fread() on .gz
+  - r-matrix
+  - r-optparse
+  - r-ggplot2
+  - r-pheatmap=1.0.13
+  - r-msigdbr=26.1.1
+  - r-robustrankaggreg=1.2.1
+  - bioconductor-deseq2=1.52.0
+  - bioconductor-fgsea=1.38.0
+  - bioconductor-clusterprofiler=4.20.0
+  - bioconductor-decoupler=2.17.0
+  # Methods specify Seurat v4 (Mixscape / CalcPerturbSig workflow). Install explicitly:
+  #   remotes::install_version("SeuratObject", "4.1.4")
+  #   remotes::install_version("Seurat", "4.4.0")      # TODO confirm exact v4 release used
+  #   remotes::install_github("zhengxwen/SeuratDisk")   # h5ad export for cNMF

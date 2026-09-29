@@ -1,0 +1,15 @@
+# FitHiChIP v11.0 configuration template — TODO replace with configs used
+ValidPairs=
+Interaction=
+PeakFile=           # H3K27ac ChIP-seq peaks (same cell lot)
+OutDir=
+IntType=3           # 3 = peak-to-all
+BINSIZE=5000
+LowDistThr=20000
+UppDistThr=2000000
+UseP2PBackgrnd=1
+BiasType=1
+MergeInt=1
+QVALUE=0.01
+ChrSizeFile=
+PREFIX=

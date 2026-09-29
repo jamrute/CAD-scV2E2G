@@ -1,0 +1,33 @@
+name: cad-r-multiome
+channels: [conda-forge, bioconda]
+dependencies:
+  - r-base=4.6            # TODO confirm from sessionInfo(); Bioc 3.23-era package versions in Methods
+  - r-remotes
+  - r-yaml
+  - r-data.table
+  - r-r.utils          # fread() on .gz
+  - r-matrix
+  - r-future
+  - r-future.apply
+  - r-ggplot2
+  - r-patchwork
+  - r-seurat=5.5.1
+  - r-sctransform=0.4.3
+  - r-harmony=2.0.5
+  - r-signac=1.17.1
+  - r-slam=0.1_56
+  - r-lme4=2.0_6
+  - r-qvalue
+  - r-optparse
+  - bioconductor-genomicranges
+  - bioconductor-iranges=2.46.0
+  - bioconductor-rtracklayer
+  - bioconductor-mungesumstats=1.20.0
+  - bioconductor-chromvar
+  - bioconductor-motifmatchr
+  - bioconductor-jaspar2020
+  - bioconductor-bsgenome.hsapiens.ucsc.hg38
+  - macs2=2.2.9.1
+  # post-install (R):
+  #   remotes::install_github("GreenleafLab/ArchR", ref = "v1.0.3", repos = BiocManager::repositories())
+  #   BiocManager::install("Qtlizer")   # v1.22.0

@@ -1,0 +1,11 @@
+name: cad-ldsc
+channels: [conda-forge, bioconda]
+dependencies:
+  - python=2.7
+  - bitarray=0.8
+  - nose
+  - pybedtools=0.7
+  - scipy=0.18
+  - pandas=0.20
+  - numpy=1.16
+  # git clone https://github.com/bulik/ldsc (v1.0.1)

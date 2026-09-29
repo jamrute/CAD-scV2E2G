@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------------------
+# Paths template. Copy to paths.local.yaml (git-ignored), edit, and export:
+#   export CAD_CONFIG=/path/to/config/paths.local.yaml
+# All relative paths are resolved against `root`.
+# ---------------------------------------------------------------------------
+root: /path/to/project
+
+refs:
+  genome_fasta: refs/GRCh38/genome.fa
+  cellranger_arc_ref: refs/refdata-cellranger-arc-GRCh38-2020-A-2.0.0
+  gencode_gtf: refs/gencode.v38.annotation.gtf.gz
+  chain_hg38_to_hg19: refs/hg38ToHg19.over.chain.gz
+  kg_eur_plink: refs/1000G_Phase3_EUR/1000G.EUR   # PLINK prefix
+  kg_ref_rfmix: refs/1000G_Phase3/                # YRI + CEU panels
+  ldsc_baseline: refs/ldsc/1000G_EUR_Phase3_baseline/
+  ldsc_weights: refs/ldsc/weights_hm3_no_hla/
+  ldsc_hm3_snplist: refs/ldsc/w_hm3.snplist
+  gtex_v8_eqtl: refs/GTEx_v8/GTEx_Analysis_v8_eQTL/
+
+multiome:
+  cellranger_arc_out: data/multiome/cellranger_arc/   # one sub-dir per sample
+  sample_sheet: resources/multiome_samples.tsv
+  seurat_obj: results/multiome/seurat_rna_annotated.rds
+  archr_project: results/multiome/ArchRProject/
+  out: results/multiome/
+
+gwas:
+  cad_sumstats: data/gwas/Aragam2022_CAD.tsv.gz
+  cad_lead_variants: data/gwas/Aragam2022_lead_and_conditional.tsv
+  cad_finemap_credible_sets: data/gwas/Aragam2022_credible_sets.tsv
+  other_sumstats_dir: data/gwas/other_traits/
+  cad_variant_superset: results/gwas/cad_variant_superset_hg38.tsv   # output of 01_multiome/08
+
+qtl:
+  genotype_array_dir: data/genotypes/GSA24v3/
+  imputed_vcf: data/genotypes/topmed_imputed/
+  turner_vcf: data/external/turner2022/genotypes.vcf.gz
+  turner_fragments_dir: data/external/turner2022/fragments/
+  merged_vcf: results/qtl/genotypes/merged_filtered.vcf.gz
+  rasqual_bin: tools/rasqual/bin/rasqual
+  rasqual_src: tools/rasqual/
+  out: results/qtl/
+
+perturbseq:
+  splitpipe_dge_dir: data/perturbseq/combined/DGE_filtered/
+  guide_map: resources/perturbseq_barcode_to_target.tsv
+  hcasmc_10x_dir: data/perturbseq/hcasmc_10x/
+  incucyte_dir: data/perturbseq/incucyte/
+  out: results/perturbseq/
+
+hic:
+  fastq_dir: data/hic/fastq/
+  nfcore_out: results/hic/nfcore/
+  aqua_dir: results/hic/aqua/
+  phased_dir: data/hic/phased/
+  hichip_dir: data/hichip/
+  chipseq_dir: data/chipseq/
+  ctcf_peaks_hcasmc: data/chipseq/HCASMC_CTCF_peaks.bed
+  out: results/hic/

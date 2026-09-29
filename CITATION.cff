@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the associated Nature article."
+title: "CAD-scV2E2G: analysis code for a single-cell variant-to-enhancer-to-gene map for coronary artery disease"
+type: software
+license: MIT
+repository-code: "https://github.com/jamrute/CAD-scV2E2G"
+contact:
+  - family-names: Amrute
+    given-names: Junedh M.
+    email: "junedh.amrute@mdc-berlin.de"
+    affiliation: "Max Delbrück Center for Molecular Medicine, Berlin"
+  - family-names: Amrute
+    given-names: Junedh M.
+    email: "jamrute@wustl.edu"
+    affiliation: "Washington University School of Medicine, St. Louis"
+  - family-names: Stitziel
+    given-names: Nathan O.
+    affiliation: "Washington University School of Medicine, St. Louis"
+authors:
+  - family-names: Amrute
+    given-names: Junedh M.
+    email: "junedh.amrute@mdc-berlin.de"
+  - family-names: Lee
+    given-names: Paul C.
+  - family-names: Eres
+    given-names: Ittai
+  - family-names: Yamawaki
+    given-names: Tracy
+  - family-names: Stitziel
+    given-names: Nathan O.
+preferred-citation:
+  type: article
+  title: "Single-cell variant-to-enhancer-to-gene map for coronary artery disease"
+  journal: Nature
+  year: 2026
+  doi: "TBD"
+  authors:
+    - family-names: Amrute
+      given-names: Junedh M.
+    - family-names: Lee
+      given-names: Paul C.
+    - family-names: Eres
+      given-names: Ittai
+    - family-names: Yamawaki
+      given-names: Tracy
+    - name: "et al."
+    - family-names: Stitziel
+      given-names: Nathan O.

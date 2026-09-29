@@ -1,0 +1,13 @@
+name: cad-hic
+channels: [conda-forge, bioconda]
+dependencies:
+  - python=3.10
+  - nextflow
+  - openjdk=17
+  - cooler
+  - cooltools=0.7.1
+  - fithic=2.0.8
+  - pip
+  - pip:
+      - nf-core
+  # Juicer tools (HiCCUPS) jar, OnTAD 1.4, HiCRes 2.0 and AQuA Tools are installed separately.

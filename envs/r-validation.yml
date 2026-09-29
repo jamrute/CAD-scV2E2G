@@ -1,0 +1,14 @@
+name: cad-r-validation
+channels: [conda-forge, bioconda]
+dependencies:
+  - r-base=4.3.1
+  - r-yaml
+  - r-optparse
+  - r-data.table
+  - r-r.utils          # fread() on .gz
+  - r-ggplot2
+  - r-pheatmap
+  - bioconductor-edger=3.42.4
+  - bioconductor-clusterprofiler
+  - bioconductor-org.hs.eg.db
+  # locuszoomr 0.3.5:  remotes::install_version("locuszoomr", "0.3.5")

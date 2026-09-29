@@ -1,0 +1,18 @@
+name: cad-genomics-cli
+channels: [conda-forge, bioconda]
+dependencies:
+  - plink=1.90
+  - plink2
+  - bcftools
+  - htslib
+  - samtools=1.13
+  - bedtools
+  - bwa
+  - picard=3.4.0
+  - hicup=0.7.4
+  - trim-galore=0.6.5
+  - star=2.7.0
+  - htseq=2.1.2
+  - primer3=2.6.1
+  - gsl            # RASQUAL build dependency
+  - lapack         # RASQUAL build dependency (CLAPACK)

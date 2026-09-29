@@ -1,0 +1,67 @@
+Bootstrap: docker
+From: public.ecr.aws/ubuntu/ubuntu:22.04
+
+%labels
+    Author Ittai Eres
+    Description FitHiC container for HPC (Apptainer/Singularity)
+
+%environment
+    export PATH=/opt/venv-fithic/bin:$PATH
+    export PYTHONUNBUFFERED=1
+    export LANG=C.UTF-8
+    export MPLCONFIGDIR=/tmp/matplotlib
+
+%files
+    HiCPro2FitHiC.py /opt/fithic-utils/HiCPro2FitHiC.py
+    CombineNearbyInteraction.py /opt/fithic-utils/CombineNearbyInteraction.py
+    merge-filter-parallelized.sh /opt/fithic-utils/merge-filter-parallelized.sh
+
+%post
+    set -eux
+
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential ca-certificates wget curl git \
+        python3.10 python3.10-venv python3.10-dev python3-pip \
+        gzip bzip2 unzip \
+        libbz2-dev liblzma-dev libz-dev
+
+    python3.10 -m venv /opt/venv-fithic
+    . /opt/venv-fithic/bin/activate
+    pip install --upgrade pip setuptools wheel
+
+    # Install FitHiC
+    pip install "git+https://github.com/ay-lab/FitHiC.git@master"
+
+    # Utilities needed by CombineNearbyInteraction.py
+    pip install --no-cache-dir networkx numpy
+
+    # Install bundled utilities (copied via %files)
+    chmod +x /opt/fithic-utils/HiCPro2FitHiC.py
+    chmod +x /opt/fithic-utils/CombineNearbyInteraction.py
+    chmod +x /opt/fithic-utils/merge-filter-parallelized.sh
+
+    ln -sf /opt/fithic-utils/HiCPro2FitHiC.py /usr/local/bin/HiCPro2FitHiC.py
+
+    # Convenience symlink for fithic CLI
+    ln -sf /opt/venv-fithic/bin/fithic /usr/local/bin/fithic
+
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%test
+    set -eux
+    . /opt/venv-fithic/bin/activate
+
+    fithic --version
+    fithic --help >/dev/null
+
+    HiCPro2FitHiC.py --help >/dev/null
+
+    # Verify python deps for merging util exist
+    python3 -c "import networkx; import numpy; print('networkx', networkx.__version__)"
+    python3 /opt/fithic-utils/CombineNearbyInteraction.py --help >/dev/null
+
+%runscript
+    exec fithic "$@"
+

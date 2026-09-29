@@ -1,0 +1,2409 @@
+---
+title: "HiC_meta_comparisons"
+author: "Ittai Eres"
+date: "2023-10-04"
+output: html_document
+---
+
+```{r setup, eval=FALSE, include=FALSE}
+if (!requireNamespace("BiocManager", quietly=TRUE))
+    install.packages("BiocManager")
+BiocManager::install("HiCcompare")
+BiocManager::install("TADCompare")
+BiocManager::install("SpectralTAD")
+BiocManager::install("multiHiCcompare")
+```
+
+```{r Library Load}
+library(dplyr)
+library(data.table)
+library(HiCcompare)
+library(multiHiCcompare)
+library(SpectralTAD)
+library(TADCompare)
+library(BiocParallel)
+library(ggplot2)
+library(Hmisc)
+library(stringr)
+library(pheatmap)
+numCores <- 96
+register(MulticoreParam(workers=numCores), default=TRUE)
+data("hg38_cyto")
+```
+
+## Merge significant aggregated loops from both methods and within each ancestry:
+```{r}
+setwd("<path>/FULL_SAMPLES/loops/")
+EUR.HIC <- fread("EUR_aggregated_10kb_HICCUPS_loops.bedpe") %>% mutate(ID=paste(chrom1, start1, start2, sep=":")) %>% dplyr::select(chrom1, start1, end1, chrom2, start2, end2, ID, count) #27,184 loops
+AFR.HIC <- fread("AFR_aggregated_10kb_HICCUPS_loops.bedpe") %>% mutate(ID=paste(chrom1, start1, start2, sep=":")) %>% dplyr::select(chrom1, start1, end1, chrom2, start2, end2, ID, count) #31,248 loops
+EUR.FIT <- fread("EUR_aggregated_10kb_FitHiC_loops.bedpe") %>% dplyr::select(chr1, start1, end1, chr2, start2, end2, contactCount, name) #Already has a "name" column that can be used for ID #196,409 loops
+AFR.FIT <- fread("AFR_aggregated_10kb_FitHiC_loops.bedpe") %>% dplyr::select(chr1, start1, end1, chr2, start2, end2, contactCount, name) #Already has a "name" column that can be used for ID #219,437 loops
+
+EUR.HIC <- EUR.HIC %>% group_by(ID) %>% summarise(chrom1=unique(chrom1), start1=unique(start1), end1=unique(end1), chrom2=unique(chrom2), start2=unique(start2), end2=unique(end2), count=sum(count, na.rm=TRUE)) %>% dplyr::select(chrom1, start1, end1, chrom2, start2, end2, ID, count) #Reduce to 12,633 loops (>50% reduction)
+
+AFR.HIC <- AFR.HIC %>% group_by(ID) %>% summarise(chrom1=unique(chrom1), start1=unique(start1), end1=unique(end1), chrom2=unique(chrom2), start2=unique(start2), end2=unique(end2), count=sum(count, na.rm=TRUE)) %>% dplyr::select(chrom1, start1, end1, chrom2, start2, end2, ID, count) #Reduce to 14,940 loops (>50% reduction)
+
+EUR.FIT <- EUR.FIT %>% group_by(name) %>% summarise(chr1=unique(chr1), start1=unique(start1), end1=unique(end1), chr2=unique(chr2), start2=unique(start2), end2=unique(end2), contactCount=sum(contactCount, na.rm=TRUE)) %>% dplyr::select(chr1, start1, end1, chr2, start2, end2, name, contactCount) #Reduce to 92,848 loops (>50% reduction)
+
+AFR.FIT <- AFR.FIT %>% group_by(name) %>% summarise(chr1=unique(chr1), start1=unique(start1), end1=unique(end1), chr2=unique(chr2), start2=unique(start2), end2=unique(end2), contactCount=sum(contactCount, na.rm=TRUE)) %>% dplyr::select(chr1, start1, end1, chr2, start2, end2, name, contactCount) #Reduce to 97,204 loops (>50% reduction)
+
+fwrite(EUR.HIC, "EUR_aggregated_merged_10kb_HICCUPS_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+fwrite(AFR.HIC, "AFR_aggregated_merged_10kb_HICCUPS_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+fwrite(EUR.FIT, "EUR_aggregated_merged_10kb_FitHiC_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+fwrite(AFR.FIT, "AFR_aggregated_merged_10kb_FitHiC_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+
+#Make a version for each modality that merges all loops across ancestries!
+EUR.HIC <- fread("EUR_aggregated_merged_10kb_HICCUPS_loops.bedpe")
+AFR.HIC <- fread("AFR_aggregated_merged_10kb_HICCUPS_loops.bedpe")
+EUR.FIT <- fread("EUR_aggregated_merged_10kb_FitHiC_loops.bedpe")
+AFR.FIT <- fread("AFR_aggregated_merged_10kb_FitHiC_loops.bedpe")
+
+#Coerce columns names & chr notations to be the same for the sake of comaprison:
+colnames(EUR.FIT) <- colnames(AFR.FIT) <- colnames(EUR.HIC)
+EUR.FIT$chrom1 <- gsub("chr", "", EUR.FIT$chrom1)
+EUR.FIT$chrom2 <- gsub("chr", "", EUR.FIT$chrom2)
+AFR.FIT$chrom1 <- gsub("chr", "", AFR.FIT$chrom1)
+AFR.FIT$chrom2 <- gsub("chr", "", AFR.FIT$chrom2)
+#Reconstruct IDs for FitHiC loops, as they use the midpoint of the bin instead of the bin actual coordinates:
+EUR.FIT$ID <- paste(EUR.FIT$chrom1, EUR.FIT$start1, EUR.FIT$start2, sep=":")
+AFR.FIT$ID <- paste(AFR.FIT$chrom1, AFR.FIT$start1, AFR.FIT$start2, sep=":")
+
+ALL.HIC <- rbind(EUR.HIC, AFR.HIC) %>% group_by(ID) %>% summarise(chrom1=unique(chrom1), start1=unique(start1), end1=unique(end1), chrom2=unique(chrom2), start2=unique(start2), end2=unique(end2), count=sum(count, na.rm=TRUE)) %>% dplyr::select(chrom1, start1, end1, chrom2, start2, end2, ID, count) #19,970 loops--~8k less than pure aggregation (nrow(EUR.HIC) + nrow(AFR.HIC)=27,573)
+
+ALL.FIT <- rbind(EUR.FIT, AFR.FIT) %>% group_by(ID) %>% summarise(chr1=unique(chrom1), start1=unique(start1), end1=unique(end1), chr2=unique(chrom2), start2=unique(start2), end2=unique(end2), count=sum(count, na.rm=TRUE)) %>% dplyr::select(chr1, start1, end1, chr2, start2, end2, ID, count) #138,806 loops--~50k less than pure aggregation (nrow(EUR.FIT)+nrow(AFR.FIT)=190,052)
+
+fwrite(ALL.HIC, "ALL_aggregated_merged_10kb_HICCUPS_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+fwrite(ALL.FIT, "ALL_aggregated_merged_10kb_FitHiC_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+
+#Finally, write-out full loop files that include FitHiC loops and HiCCUPS loops for each ancestry, and combined:
+ALL.EUR <- rbind(EUR.HIC, EUR.FIT) %>% group_by(ID) %>% summarise(chrom1=unique(chrom1), start1=unique(start1), end1=unique(end1), chrom2=unique(chrom2), start2=unique(start2), end2=unique(end2), count=sum(count, na.rm=TRUE)) %>% dplyr::select(chrom1, start1, end1, chrom2, start2, end2, ID, count) #94,200 loops--~9k less than pure aggregation (nrow(EUR.HIC)+nrow(EUR.FIT)=105,481 loops)
+ALL.AFR <- rbind(AFR.HIC, AFR.FIT) %>% group_by(ID) %>% summarise(chrom1=unique(chrom1), start1=unique(start1), end1=unique(end1), chrom2=unique(chrom2), start2=unique(start2), end2=unique(end2), count=sum(count, na.rm=TRUE)) %>% dplyr::select(chrom1, start1, end1, chrom2, start2, end2, ID, count) #98,573 loops--~14k less than pure aggregation (nrow(AFR.HIC)+nrow(AFR.FIT)=112,144 loops)
+
+ALL.ALL <- rbind(ALL.EUR, ALL.AFR) %>% group_by(ID) %>% summarise(chrom1=unique(chrom1), start1=unique(start1), end1=unique(end1), chrom2=unique(chrom2), start2=unique(start2), end2=unique(end2), count=sum(count, na.rm=TRUE)) %>% dplyr::select(chrom1, start1, end1, chrom2, start2, end2, ID, count) #140,920 loops--~52k less than pure aggregation (nrow(ALL.EUR)+nrow(ALL.AFR)=192,773 loops)
+
+fwrite(ALL.EUR, "ALL_EUR_aggregated_merged_10kb_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+fwrite(ALL.AFR, "ALL_AFR_aggregated_merged_10kb_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+fwrite(ALL.ALL, "ALL_ALL_aggregated_merged_10kb_loops.bedpe", quote=F, col.names=T, row.names=F, sep="\t")
+```
+
+## Look at overlap of FitHiC and HiCCUPS loops across samples; note this was performed on <compute_environment>.
+```{r}
+setwd("<path>/FULL_SAMPLES/INTERSECTS/")
+
+#Get all sample IDs in a vector
+samples <- c(SAMPLE_01, SAMPLE_02, SAMPLE_03, SAMPLE_04, SAMPLE_05, SAMPLE_06, SAMPLE_07, SAMPLE_08, SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22)
+#Updated version for paper that only includes included samples:
+samples <- c(SAMPLE_05, SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22)
+resolutions <- c(10, 5, 2)
+
+overlaps <- data.frame()
+
+for (sample in samples) {
+  for (resolution in resolutions){
+  tmp.df <- fread(paste0(sample, "_", resolution,"kb_loopcaller_intersects.txt"))
+  colnames(tmp.df) <- c("FitHiC", "Shared", "HiCCUPS")
+  tmp.df$sample <- sample
+  tmp.df$resolution <- resolution*1000
+  tmp.df <- melt(tmp.df, id.vars=c("sample", "resolution"))
+  overlaps <- rbind(overlaps, tmp.df)
+}
+}
+
+overlaps$sample <- as.factor(overlaps$sample)
+
+#10kb plot
+ggplot(data=dplyr::filter(overlaps, resolution==10000), aes(x=sample, group=sample, y=value, fill=variable)) + geom_bar(stat="identity") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Sample ID") + ylab("Significant Loop Count") + ggtitle("Intra-Sample Comparison of Significant Loops, FitHiC vs. HiCCUPS, 10kb") + guides(fill=guide_legend(title="Loop Origin"))
+ggsave("../QCFIGS/intra_method_loops_10kb_counts.pdf")
+ggplot(data=dplyr::filter(overlaps, resolution==10000), aes(x=sample, group=sample, y=value, fill=variable)) + geom_bar(stat="identity", position="fill") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Sample ID") + ylab("Percentage of Significant Loops") + ggtitle("Intra-Sample Comparison of Significant Loops, FitHiC vs. HiCCUPS, 10kb") + guides(fill=guide_legend(title="Loop Origin")) + 
+  scale_y_continuous(labels = scales::percent_format())
+ggsave("../QCFIGS/intra_method_loops_10kb_percentages.pdf")
+
+#5kb plot
+ggplot(data=dplyr::filter(overlaps, resolution==5000), aes(x=sample, group=sample, y=value, fill=variable)) + geom_bar(stat="identity") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Sample ID") + ylab("Significant Loop Count") + ggtitle("Intra-Sample Comparison of Significant Loops, FitHiC vs. HiCCUPS, 5kb") + guides(fill=guide_legend(title="Loop Origin"))
+ggsave("../QCFIGS/intra_method_loops_5kb_counts.pdf")
+ggplot(data=dplyr::filter(overlaps, resolution==5000), aes(x=sample, group=sample, y=value, fill=variable)) + geom_bar(stat="identity", position="fill") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Sample ID") + ylab("Percentage of Significant Loops") + ggtitle("Intra-Sample Comparison of Significant Loops, FitHiC vs. HiCCUPS, 5kb") + guides(fill=guide_legend(title="Loop Origin")) + 
+  scale_y_continuous(labels = scales::percent_format())
+ggsave("../QCFIGS/intra_method_loops_5kb_percentages.pdf")
+
+#2kb plot
+ggplot(data=dplyr::filter(overlaps, resolution==2000), aes(x=sample, group=sample, y=value, fill=variable)) + geom_bar(stat="identity") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Sample ID") + ylab("Significant Loop Count") + ggtitle("Intra-Sample Comparison of Significant Loops, FitHiC vs. HiCCUPS, 2kb") + guides(fill=guide_legend(title="Loop Origin"))
+ggsave("../QCFIGS/intra_method_loops_2kb_counts.pdf")
+ggplot(data=dplyr::filter(overlaps, resolution==2000), aes(x=sample, group=sample, y=value, fill=variable)) + geom_bar(stat="identity", position="fill") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Sample ID") + ylab("Percentage of Significant Loops") + ggtitle("Intra-Sample Comparison of Significant Loops, FitHiC vs. HiCCUPS, 2kb") + guides(fill=guide_legend(title="Loop Origin")) + 
+  scale_y_continuous(labels = scales::percent_format())
+ggsave("../QCFIGS/intra_method_loops_2kb_percentages.pdf")
+
+#Check for merged aggregated loops across all samples, stratified by ancestry as well as combined:
+fit.overlaps <- fread("AFR_vs_EUR_FitHiC_intersects.txt") %>% mutate(African=Unique_to_1, European=Unique_to_2) %>% select(African, Shared, European) %>% mutate(Method="FitHiC")
+hic.overlaps <- fread("AFR_vs_EUR_HICCUPS_intersects.txt") %>% mutate(African=Unique_to_1, European=Unique_to_2) %>% select(African, Shared, European) %>% mutate(Method="HiCCUPS")
+anc.overlaps.all <- fread("AFR_vs_EUR_all_intersects_10kb.txt") %>% mutate(African=Unique_to_1, European=Unique_to_2) %>% select(African, Shared, European) %>% mutate(Method="Both Merged")
+
+all.overlaps <- rbind(fit.overlaps, hic.overlaps, anc.overlaps.all)
+all.overlaps <- melt(all.overlaps, id.vars = "Method")
+all.overlaps$Method <- factor(all.overlaps$Method, levels=c("HiCCUPS", "FitHiC", "Both Merged"))
+
+ggplot(data=all.overlaps, aes(x=Method, group=Method, y=value, fill=variable)) + geom_bar(stat="identity") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Loop-Calling Method") + ylab("Significant Loop Count") + ggtitle("Intra-Ancestry Comparison of Merged Significant Loops, FitHiC vs. HiCCUPS, 10kb") + guides(fill=guide_legend(title="Loop Origin"))
+ggsave("../QCFIGS/intra_ancestry_loops_10kb_counts.pdf")
+ggplot(data=all.overlaps, aes(x=Method, group=Method, y=value, fill=variable)) + geom_bar(stat="identity", position="fill") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Loop-Calling Method") + ylab("Percentage of Significant Loops") + ggtitle("Intra-Ancestry Comparison of Merged Significant Loops, FitHiC vs. HiCCUPS, 10kb") + guides(fill=guide_legend(title="Loop Origin")) + 
+  scale_y_continuous(labels = scales::percent_format())
+ggsave("../QCFIGS/intra_ancestry_loops_10kb_percentages.pdf")
+
+
+method.overlaps.all <- fread("FitHiC_vs_HICCUPS_ALL_10kb.txt") %>% mutate(FitHiC=Unique_to_1, HiCCUPS=Unique_to_2) %>% select(FitHiC, Shared, HiCCUPS) %>% mutate(sample="ALL") %>% melt(., id.vars="sample")
+overlaps10kb <- filter(overlaps, resolution==10000) %>% select(-resolution)
+overlaps10kb <- rbind(overlaps10kb, method.overlaps.all)
+
+ggplot(data=overlaps10kb, aes(x=sample, group=sample, y=value, fill=variable)) + geom_bar(stat="identity") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Sample ID") + ylab("Significant Loop Count") + ggtitle("Intra-Sample Comparison of Significant Loops, FitHiC vs. HiCCUPS, 10kb") + guides(fill=guide_legend(title="Loop Origin"))
+ggsave("../QCFIGS/intra_method_merged_loops_10kb_counts.pdf")
+ggplot(data=overlaps10kb, aes(x=sample, group=sample, y=value, fill=variable)) + geom_bar(stat="identity", position="fill") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Sample ID") + ylab("Percentage of Significant Loops") + ggtitle("Intra-Sample Comparison of Significant Loops, FitHiC vs. HiCCUPS, 10kb") + guides(fill=guide_legend(title="Loop Origin")) + 
+  scale_y_continuous(labels = scales::percent_format())
+ggsave("../QCFIGS/intra_method_merged_loops_10kb_percentages.pdf")
+```
+
+### Look at contact distance distributions per sample, methodology, and resolution. Again, performed on <compute_environment>:
+```{r}
+library(data.table)
+library(ggplot2)
+library(dplyr)
+
+# Samples/resolutions from your earlier block
+samples <- c(SAMPLE_05, SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15,
+             SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22)
+resolutions <- c(10000, 5000, 2000)
+
+# Toggle display cap without removing data
+cap_y_at_2e6 <- TRUE
+y_cap <- 2e6
+
+# Helper: read BEDPE-like loop file and compute contact distance
+get_contact_distances <- function(file, sample_id, resolution, method, header = TRUE) {
+  dt <- fread(file, header = header, sep = "\t", quote = "", data.table = FALSE)
+  
+  if (ncol(dt) < 6) {
+    stop(paste("File has fewer than 6 columns:", file))
+  }
+  
+  dt <- dt[, 1:6]
+  colnames(dt) <- c("chr1", "start1", "end1", "chr2", "start2", "end2")
+  
+  dt$chr1 <- gsub("^chr", "", dt$chr1)
+  dt$chr2 <- gsub("^chr", "", dt$chr2)
+  
+  dt$start1 <- as.numeric(dt$start1)
+  dt$end1   <- as.numeric(dt$end1)
+  dt$start2 <- as.numeric(dt$start2)
+  dt$end2   <- as.numeric(dt$end2)
+  
+  dt <- dt %>%
+    filter(!is.na(start1), !is.na(end1), !is.na(start2), !is.na(end2)) %>%
+    filter(chr1 == chr2)
+  
+  dt$mid1 <- (dt$start1 + dt$end1) / 2
+  dt$mid2 <- (dt$start2 + dt$end2) / 2
+  dt$contact_distance_bp <- abs(dt$mid2 - dt$mid1)
+  
+  dt$sample <- as.factor(sample_id)
+  dt$resolution <- resolution
+  dt$method <- method
+  
+  dt[, c("sample", "resolution", "method", "chr1", "chr2", "contact_distance_bp")]
+}
+
+# Build long table
+loop_dists <- data.frame()
+
+for (sample in samples) {
+  for (resolution in resolutions) {
+    res_kb <- resolution / 1000
+    
+    fithic_file <- paste0(
+      "<path>/FULL_SAMPLES/FITHIC_2026/LOOPS/BEDPES/",
+      sample, ".fithic.", resolution, ".loops.bedpe"
+    )
+    
+    hiccups_file <- paste0(
+      "<path>/FULL_SAMPLES/loops/",
+      "loops_", res_kb, "kb", sample, ".bedpe"
+    )
+    
+    tmp_fithic <- get_contact_distances(
+      file = fithic_file,
+      sample_id = sample,
+      resolution = resolution,
+      method = "FitHiC",
+      header = TRUE
+    )
+    
+    tmp_hiccups <- get_contact_distances(
+      file = hiccups_file,
+      sample_id = sample,
+      resolution = resolution,
+      method = "HiCCUPS",
+      header = TRUE
+    )
+    
+    loop_dists <- rbind(loop_dists, tmp_fithic, tmp_hiccups)
+  }
+}
+
+loop_dists$sample <- factor(loop_dists$sample, levels = as.character(samples))
+
+# Plotting function: one plot per method per resolution
+make_violin_plot <- function(df, method_name, resolution_value, cap_y = FALSE, ymax = 2e6) {
+  p <- ggplot(
+    data = df %>% filter(method == method_name, resolution == resolution_value),
+    aes(x = sample, y = contact_distance_bp, group = sample)
+  ) +
+    geom_violin(fill = "lightblue", color = "black", trim = TRUE, scale = "width") +
+    geom_boxplot(
+      width = 0.12,
+      fill = "white",
+      color = "black",
+      outlier.shape = NA
+    ) +
+    scale_y_continuous(
+      breaks = c(0, 5e5, 1e6, 1.5e6, 2e6),
+      labels = c(
+        "0",
+        expression(5 %*% 10^5),
+        expression(1 %*% 10^6),
+        expression(1.5 %*% 10^6),
+        expression(2 %*% 10^6)
+      )
+    ) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 90, hjust = 1),
+      plot.title = element_text(face = "bold")
+    ) +
+    xlab("Sample ID") +
+    ylab("Contact Distance (bp)") +
+    ggtitle(paste0(method_name, " Loop Contact Distance Distributions, ", resolution_value / 1000, " kb"))
+  
+  if (cap_y) {
+    p <- p + coord_cartesian(ylim = c(0, ymax))
+  }
+  
+  p
+}
+
+# Generate separate plots per resolution for FitHiC
+for (res in resolutions) {
+  p <- make_violin_plot(
+    df = loop_dists,
+    method_name = "FitHiC",
+    resolution_value = res,
+    cap_y = cap_y_at_2e6,
+    ymax = y_cap
+  )
+  
+  suffix <- ifelse(cap_y_at_2e6, "_ymax2e6", "")
+  ggsave(
+    filename = paste0("../QCFIGS/fithic_contact_distance_", res / 1000, "kb_violin", suffix, ".pdf"),
+    plot = p,
+    width = 12,
+    height = 6
+  )
+}
+
+# Generate separate plots per resolution for HiCCUPS
+for (res in resolutions) {
+  p <- make_violin_plot(
+    df = loop_dists,
+    method_name = "HiCCUPS",
+    resolution_value = res,
+    cap_y = cap_y_at_2e6,
+    ymax = y_cap
+  )
+  
+  suffix <- ifelse(cap_y_at_2e6, "_ymax2e6", "")
+  ggsave(
+    filename = paste0("../QCFIGS/hiccups_contact_distance_", res / 1000, "kb_violin", suffix, ".pdf"),
+    plot = p,
+    width = 12,
+    height = 6
+  )
+}
+```
+
+### HiCRes results & other QC metrics for library complexity, again on <compute_environment>:
+```{r}
+##### Get HiCRes results as one panel
+library(magick)
+library(cowplot)
+library(patchwork)
+
+base_dir <- "<path>/FULL_SAMPLES/hicres_results"
+
+dirs <- list.dirs(base_dir, recursive = FALSE)
+dirs <- dirs[!grepl("old|QC_|SAMPLE_01|SAMPLE_02|SAMPLE_03|SAMPLE_04|4200", dirs)]
+
+get_sample <- function(path) {
+  sub("_HiCRes_outputs$", "", basename(path))
+}
+
+plots <- list()
+
+for (d in dirs) {
+  img_path <- file.path(d, "prediction.png")
+  if (!file.exists(img_path)) next
+  
+  sample <- get_sample(d)
+  
+  img <- image_read(img_path)
+  img <- image_trim(img)
+  
+  p <- ggdraw() +
+    draw_label(
+      sample,
+      x = 0.5, y = 0.95,
+      hjust = 0.5, vjust = 1,
+      fontface = "bold",
+      size = 12
+    ) +
+    draw_image(
+      img,
+      x = 0, y = 0,
+      width = 1, height = 0.98,
+      hjust = 0, vjust = 0
+    )
+  
+  plots[[sample]] <- p
+}
+
+combined <- wrap_plots(plots, ncol = 4)
+
+ggsave(
+  filename = "../QCFIGS/hicres_combined_panels.pdf",
+  plot = combined,
+  width = 16,
+  height = 20
+)
+
+##### Attempt to make it in a single figure:
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(scales)
+
+all_preds <- data.frame()
+
+for (d in dirs) {
+  pred_file <- file.path(d, "prediction.txt")
+  if (!file.exists(pred_file)) next
+  
+  sample <- get_sample(d)
+  tmp <- fread(pred_file)
+  
+  # enforce names explicitly
+  colnames(tmp) <- c("Valid_Reads", "Predicted_Resolution")
+  
+  tmp$sample <- sample
+  tmp$Valid_Reads_M <- tmp$Valid_Reads / 1e6
+  
+  all_preds <- rbind(all_preds, tmp)
+}
+
+all_preds$sample <- factor(all_preds$sample, levels = sort(unique(all_preds$sample)))
+
+p_overlay <- ggplot(
+  all_preds,
+  aes(x = Valid_Reads_M, y = Predicted_Resolution, color = sample, group = sample)
+) +
+  geom_line(linewidth = 0.9, alpha = 0.9) +
+  theme_bw() +
+  xlab("Valid read pairs (M)") +
+  ylab("Predicted resolution (bp)") +
+  ggtitle("HiCRes Predicted Resolution Curves Across Samples") +
+  scale_y_continuous(labels = comma_format()) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  ) + coord_cartesian(ylim=c(0, 500000))
+
+ggsave(
+  "../QCFIGS/hicres_overlay_all_samples_from_prediction_txt.pdf",
+  plot = p_overlay,
+  width = 12,
+  height = 8
+)
+
+p_overlay_log <- ggplot(
+  all_preds,
+  aes(x = Valid_Reads_M, y = Predicted_Resolution, color = sample, group = sample)
+) +
+  geom_line(linewidth = 0.9, alpha = 0.9) +
+  theme_bw() +
+  xlab("Valid read pairs (M)") +
+  ylab("Predicted resolution (bp, log scale)") +
+  ggtitle("HiCRes Predicted Resolution Curves Across Samples") +
+  scale_y_log10(
+    breaks = c(2e3, 5e3, 1e4, 2e4, 1e5, 5e5),
+    labels = comma_format()
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  ) +
+  coord_cartesian(ylim = c(1e3, 5e5))
+ggsave(
+  "../QCFIGS/hicres_overlay_all_samples_from_prediction_txt_logY.pdf",
+  plot = p_overlay_log,
+  width = 12,
+  height = 8
+)
+
+
+##### Take a look at unique valid pairs and inferred resolution:
+qc_base_dir <- file.path(base_dir, "QC_outputs")
+# -------------------------
+# Helper functions
+# -------------------------
+
+read_valid_pairs <- function(sample_id) {
+  qc_dir <- file.path(qc_base_dir, paste0(sample_id, "_QC_outputs"))
+  qc_file <- list.files(qc_dir, pattern = "^hicup_filter_summary_.*\\.txt$", full.names = TRUE)
+  
+  if (length(qc_file) != 1) {
+    stop(paste("Expected exactly 1 HiCUP summary file for sample", sample_id,
+               "but found", length(qc_file)))
+  }
+  
+  dt <- fread(qc_file)
+  if (!"Valid_pairs" %in% colnames(dt)) {
+    stop(paste("Valid_pairs column not found in", qc_file))
+  }
+  
+  data.frame(
+    sample = as.character(sample_id),
+    Valid_pairs = as.numeric(dt$Valid_pairs[1])
+  )
+}
+
+read_prediction <- function(sample_id) {
+  pred_file <- file.path(
+    base_dir,
+    paste0(sample_id, "_HiCRes_outputs"),
+    "prediction.txt"
+  )
+  
+  if (!file.exists(pred_file)) {
+    stop(paste("Missing prediction.txt for sample", sample_id))
+  }
+  
+  dt <- fread(pred_file)
+  colnames(dt) <- c("Valid_Reads", "Predicted_Resolution")
+  dt$sample <- as.character(sample_id)
+  dt
+}
+
+# nearest predicted resolution for actual valid-pair count
+get_resolution_at_sample_depth <- function(pred_dt, valid_pairs) {
+  pred_dt <- pred_dt %>%
+    mutate(diff = abs(Valid_Reads - valid_pairs)) %>%
+    arrange(diff)
+  
+  pred_dt$Predicted_Resolution[1]
+}
+
+# optional linear interpolation if actual valid_pairs falls between grid points
+get_resolution_interpolated <- function(pred_dt, valid_pairs) {
+  approx(
+    x = pred_dt$Valid_Reads,
+    y = pred_dt$Predicted_Resolution,
+    xout = valid_pairs,
+    rule = 2
+  )$y
+}
+
+# -------------------------
+# Build summary tables
+# -------------------------
+
+valid_pairs_df <- do.call(
+  rbind,
+  lapply(samples, read_valid_pairs)
+)
+
+prediction_list <- lapply(samples, read_prediction)
+all_preds <- do.call(rbind, prediction_list)
+
+resolution_df <- lapply(samples, function(s) {
+  s_char <- as.character(s)
+  
+  vp <- valid_pairs_df %>%
+    filter(sample == s_char) %>%
+    pull(Valid_pairs)
+  
+  pred_dt <- all_preds %>%
+    filter(sample == s_char)
+  
+  # choose one:
+  # predicted_res <- get_resolution_at_sample_depth(pred_dt, vp)     # nearest point
+  predicted_res <- get_resolution_interpolated(pred_dt, vp)          # smoother / better
+  
+  data.frame(
+    sample = s_char,
+    Valid_pairs = vp,
+    Predicted_Resolution = predicted_res
+  )
+}) %>% bind_rows()
+
+# preserve sample order
+valid_pairs_df$sample <- factor(valid_pairs_df$sample, levels = as.character(samples))
+resolution_df$sample <- factor(resolution_df$sample, levels = as.character(samples))
+
+# -------------------------
+# Plot 1: valid pairs barplot
+# -------------------------
+
+p_valid_pairs <- ggplot(valid_pairs_df, aes(x = sample, y = Valid_pairs)) +
+  geom_col(fill = "steelblue") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(face = "bold")
+  ) +
+  xlab("Sample ID") +
+  ylab("Unique valid pairs") +
+  ggtitle("Unique Valid Pairs per Sample") +
+  scale_y_continuous(labels = comma_format(), breaks=c(250000000, 500000000, 750000000, 1000000000, 1250000000))
+
+ggsave(
+  "../QCFIGS/hicup_valid_pairs_per_sample.pdf",
+  plot = p_valid_pairs,
+  width = 10,
+  height = 6
+)
+
+# -------------------------
+# Plot 2: inferred HiCRes resolution barplot
+# -------------------------
+
+p_resolution <- ggplot(resolution_df, aes(x = sample, y = Predicted_Resolution)) +
+  geom_col(fill = "firebrick2") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(face = "bold")
+  ) +
+  xlab("Sample ID") +
+  ylab("Predicted resolution (bp)") +
+  ggtitle("HiCRes Predicted Resolution at Observed Valid-Pair Depth") +
+  scale_y_continuous(labels = comma_format(), breaks=c(1e3, 2e3, 3e3, 4e3, 5e3, 6e3, 7e3, 8e3, 9e3, 10e3)) + coord_cartesian(ylim=c(0, 10001))
+
+ggsave(
+  "../QCFIGS/hicres_predicted_resolution_at_observed_depth.pdf",
+  plot = p_resolution,
+  width = 10,
+  height = 6
+)
+
+# -------------------------
+# Optional: merged summary table
+# -------------------------
+
+summary_df <- valid_pairs_df %>%
+  left_join(resolution_df %>% select(sample, Predicted_Resolution), by = "sample")
+
+write.table(
+  summary_df,
+  file = "../QCFIGS/hicres_valid_pairs_and_resolution_summary.tsv",
+  sep = "\t",
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+### HiC-Pro contact pairing statistics, again on <compute_environment>
+```{r}
+###### HiC-Pro Contact Statistics BarPlots
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+
+base_dir <- "<path>/FULL_SAMPLES"
+
+sample_order <- samples
+
+contact_categories <- c(
+  "Unique: cis <= 20Kbp",
+  "Unique: cis > 20Kbp",
+  "Unique: trans",
+  "Duplicate read pairs"
+)
+
+contact_colors <- c(
+  "Unique: cis <= 20Kbp" = "#143fd6",  # dark blue
+  "Unique: cis > 20Kbp" = "#7893e2",   # light blue
+  "Unique: trans" = "#06a02d",         # green
+  "Duplicate read pairs" = "#ada7a7"   # gray
+)
+
+read_contact_file <- function(sample_id, base_dir) {
+  infile <- file.path(
+    base_dir,
+    as.character(sample_id),
+    "multiqc",
+    "mqc_hicpro_contact_plot_1.txt"
+  )
+  
+  if (!file.exists(infile)) {
+    warning(paste("Missing file for sample", sample_id, ":", infile))
+    return(NULL)
+  }
+  
+  dt <- fread(infile)
+  
+  required_cols <- c(
+    "Sample",
+    "Unique: cis <= 20Kbp",
+    "Unique: cis > 20Kbp",
+    "Unique: trans",
+    "Duplicate read pairs"
+  )
+  
+  if (!all(required_cols %in% colnames(dt))) {
+    stop(
+      paste(
+        "File", infile, "is missing required columns. Found:",
+        paste(colnames(dt), collapse = ", ")
+      )
+    )
+  }
+  
+  # Expect one row per sample file; if multiple rows exist, sum them
+  out <- data.frame(
+    sample = as.character(sample_id),
+    `Unique: cis <= 20Kbp` = sum(as.numeric(dt[["Unique: cis <= 20Kbp"]]), na.rm = TRUE),
+    `Unique: cis > 20Kbp`  = sum(as.numeric(dt[["Unique: cis > 20Kbp"]]), na.rm = TRUE),
+    `Unique: trans`        = sum(as.numeric(dt[["Unique: trans"]]), na.rm = TRUE),
+    `Duplicate read pairs` = sum(as.numeric(dt[["Duplicate read pairs"]]), na.rm = TRUE),
+    stringsAsFactors = FALSE
+  )
+  
+  out
+}
+
+# Read all sample files
+contact_df_wide <- bind_rows(
+  lapply(sample_order, read_contact_file, base_dir = base_dir)
+)
+
+# Preserve order
+contact_df_wide$sample <- factor(contact_df_wide$sample, levels = as.character(sample_order))
+
+# Fix colnames
+colnames(contact_df_wide)[2:5] <- c("Unique: cis <= 20Kbp", "Unique: cis > 20Kbp", "Unique: trans", "Duplicate read pairs")
+
+# Write summary table
+write.table(
+  contact_df_wide,
+  file = "../QCFIGS/hicpro_contact_summary.tsv",
+  sep = "\t",
+  row.names = FALSE,
+  quote = FALSE
+)
+
+# Convert to long format
+contact_df_long <- contact_df_wide %>%
+  pivot_longer(
+    cols = all_of(contact_categories),
+    names_to = "category",
+    values_to = "count"
+  )
+
+contact_df_long$category <- factor(contact_df_long$category, levels = contact_categories)
+
+# Add percentages
+contact_df_long <- contact_df_long %>%
+  group_by(sample) %>%
+  mutate(
+    total = sum(count, na.rm = TRUE),
+    percent = 100 * count / total
+  ) %>%
+  ungroup()
+
+contact_df_long$category <- factor(
+  contact_df_long$category,
+  levels = rev(contact_categories)
+)
+
+# -------------------------
+# Plot 1: stacked counts
+# -------------------------
+p_counts <- ggplot(contact_df_long, aes(x = sample, y = count, fill = category)) +
+  geom_col() +
+  scale_fill_manual(values = contact_colors) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(face = "bold")
+  ) +
+  xlab("Sample ID") +
+  ylab("Read pair count") +
+  ggtitle("HiC-Pro Contact Statistics per Sample") +
+  scale_y_continuous(labels = comma_format()) +
+  guides(fill = guide_legend(title = NULL))
+
+ggsave(
+  "../QCFIGS/hicpro_contact_statistics_counts_stacked.pdf",
+  plot = p_counts,
+  width = 12,
+  height = 6
+)
+
+# -------------------------
+# Plot 2: stacked percentages
+# -------------------------
+p_percent <- ggplot(contact_df_long, aes(x = sample, y = percent, fill = category)) +
+  geom_col() +
+  scale_fill_manual(values = contact_colors) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(face = "bold")
+  ) +
+  xlab("Sample ID") +
+  ylab("Percentage of read pairs") +
+  ggtitle("HiC-Pro Contact Statistics per Sample (%)") +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  guides(fill = guide_legend(title = NULL))
+
+ggsave(
+  "../QCFIGS/hicpro_contact_statistics_percent_stacked.pdf",
+  plot = p_percent,
+  width = 12,
+  height = 6
+)
+```
+
+
+### Stitch together saddleplots across all samples. Do this on <compute_environment> since I had to install pdfjam:
+```{unix}
+cd <path>/FULL_SAMPLES/QCFIGS
+
+  pdfjam [0-9]*.1000000_saddle_plot.pdf \
+  --nup 5x3 \
+  --landscape \
+  --paper a1paper \
+  --outfile all_samples_saddle_plot_panel.pdf
+```
+
+
+### Finally, look at loop overlaps vs HiChIP and E2G loops!:
+```{r}
+setwd("<path>/FULL_SAMPLES/loops/MultiomeHiC_revisions/E2G")
+
+#First, re-format these files to be BEDPE-style
+files <- c("Endothelium.EnhancerPredictionsThresholded.tsv", "Fibroblast.EnhancerPredictionsThresholded.tsv", "Myeloid.EnhancerPredictionsThresholded.tsv", "VSMC_encode_e2g_predictions_threshold.171.tsv")
+for (file in files) {
+  newname <- paste0(gsub(".tsv", "", file), ".bedpe")
+  tmp.file <- fread(file) %>% dplyr::select(chr, start, end, TargetGeneTSS) %>% mutate(chr1=chr, start1=start, end1=end, chr2=chr, start2=TargetGeneTSS, end2=TargetGeneTSS+10000) %>% dplyr::select(chr1, start1, end1, chr2, start2, end2)
+  fwrite(tmp.file, newname, quote=F, col.names=T, row.names=F, sep="\t")
+}
+
+#Files in the HiChIP_bedpe folder are already formatted properly! Both have headers!
+#<path>/FULL_SAMPLES/loops/MultiomeHiC_revisions/HiChIP_bedpe
+
+#Read-in and format summarization files:
+setwd("<path>/FULL_SAMPLES/INTERSECTS/")
+overlaps <- data.frame()
+files <- c("Endothelium.EnhancerPredictionsThresholded.bedpe", "Fibroblast.EnhancerPredictionsThresholded.bedpe", "Myeloid.EnhancerPredictionsThresholded.bedpe", "VSMC_encode_e2g_predictions_threshold.171.bedpe")
+files2 <- c("FITHiChIP_EC_5kb.interactions_FitHiC_Q0.01_MergeNearContacts_filteredwDistance.bed", "FITHiChIP_SMC_5kb.interactions_FitHiC_Q0.01_MergeNearContacts_filteredwDistance.bed")
+
+for (file in files) {
+  name <- gsub("\\..*", "", file)
+  tmp.df <- fread(paste0("ALL_vs_E2G_", file,"_intersects.txt"))
+  colnames(tmp.df) <- c("HiC", "Shared", "E2G")
+  tmp.df$dataset <- paste0(name, "_E2G")
+  tmp.df <- melt(tmp.df, id.vars=c("dataset"))
+  overlaps <- rbind(overlaps, tmp.df)
+}
+
+overlaps$dataset <- gsub("_.*", "", overlaps$dataset)
+
+for (file in files2) {
+  name <- gsub("\\..*", "", file)
+  name <- gsub("(.*)_(.*)_(.*)", "\\2", name)
+  tmp.df <- fread(paste0("ALL_vs_HiChIP_", file,"_intersects.txt"))
+  colnames(tmp.df) <- c("HiC", "Shared", "HiChIP")
+  tmp.df$dataset <- name
+  tmp.df <- melt(tmp.df, id.vars=c("dataset"))
+  overlaps <- rbind(overlaps, tmp.df)
+}
+
+overlaps$dataset <- factor(overlaps$dataset, levels=c("Endothelium", "Fibroblast", "Myeloid", "VSMC", "EC", "SMC"))
+
+#Plot these!
+ggplot(data=overlaps, aes(x=dataset, group=dataset, y=value, fill=variable)) + geom_bar(stat="identity") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Cell Type") + ylab("Significant Loop Count") + ggtitle("Comparison of Significant Loops, Hi-C vs. E2G & HiChIP") + guides(fill=guide_legend(title="Loop Origin"))
+ggsave("../QCFIGS/intra_assay_loops_counts.pdf")
+ggplot(data=overlaps, aes(x=dataset, group=dataset, y=value, fill=variable)) + geom_bar(stat="identity", position="fill") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Cell Type") + ylab("Percentage of Significant Loops") + ggtitle("Comparison of Significant Loops, Hi-C vs. E2G & HiChIP") + guides(fill=guide_legend(title="Loop Origin")) + 
+  scale_y_continuous(labels = scales::percent_format())
+ggsave("../QCFIGS/intra_assay_loops_percentages.pdf")
+
+## See if/how this is different for the SHARED loops across FitHiC & HiCCUPS:
+overlaps <- data.frame()
+files <- c("Endothelium.EnhancerPredictionsThresholded.bedpe", "Fibroblast.EnhancerPredictionsThresholded.bedpe", "Myeloid.EnhancerPredictionsThresholded.bedpe", "VSMC_encode_e2g_predictions_threshold.171.bedpe")
+files2 <- c("FITHiChIP_EC_5kb.interactions_FitHiC_Q0.01_MergeNearContacts_filteredwDistance.bed", "FITHiChIP_SMC_5kb.interactions_FitHiC_Q0.01_MergeNearContacts_filteredwDistance.bed")
+
+for (file in files) {
+  name <- gsub("\\..*", "", file)
+  tmp.df <- fread(paste0("SHARED_ALL_vs_E2G_", file,"_intersects.txt"))
+  colnames(tmp.df) <- c("HiC", "Shared", "E2G")
+  tmp.df$dataset <- paste0(name, "_E2G")
+  tmp.df <- melt(tmp.df, id.vars=c("dataset"))
+  overlaps <- rbind(overlaps, tmp.df)
+}
+
+overlaps$dataset <- gsub("_.*", "", overlaps$dataset)
+
+for (file in files2) {
+  name <- gsub("\\..*", "", file)
+  name <- gsub("(.*)_(.*)_(.*)", "\\2", name)
+  tmp.df <- fread(paste0("SHARED_ALL_vs_HiChIP_", file,"_intersects.txt"))
+  colnames(tmp.df) <- c("HiC", "Shared", "HiChIP")
+  tmp.df$dataset <- name
+  tmp.df <- melt(tmp.df, id.vars=c("dataset"))
+  overlaps <- rbind(overlaps, tmp.df)
+}
+
+overlaps$dataset <- factor(overlaps$dataset, levels=c("Endothelium", "Fibroblast", "Myeloid", "VSMC", "EC", "SMC"))
+
+#Plot these!
+ggplot(data=overlaps, aes(x=dataset, group=dataset, y=value, fill=variable)) + geom_bar(stat="identity") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Cell Type") + ylab("Shared Significant Loop Count") + ggtitle("Comparison of Shared Significant Loops, Hi-C vs. E2G & HiChIP") + guides(fill=guide_legend(title="Loop Origin"))
+ggsave("../QCFIGS/SHARED_intra_assay_loops_counts.pdf")
+ggplot(data=overlaps, aes(x=dataset, group=dataset, y=value, fill=variable)) + geom_bar(stat="identity", position="fill") + theme(axis.text.x=element_text(angle=90, hjust=1)) + xlab("Cell Type") + ylab("Percentage of Shared Significant Loops") + ggtitle("Comparison of Shared Significant Loops, Hi-C vs. E2G & HiChIP") + guides(fill=guide_legend(title="Loop Origin")) + 
+  scale_y_continuous(labels = scales::percent_format())
+ggsave("../QCFIGS/SHARED_intra_assay_loops_percentages.pdf")
+```
+
+## Code for running intersections--note this is run on ieu20, not here:
+```{unix}
+# A loop to go through all samples and compare their results across Hiccups & Fithic, at different resolutions. This was the OLD version:
+for SAMPLE in SAMPLE_01 SAMPLE_02 SAMPLE_03 SAMPLE_04 SAMPLE_05 SAMPLE_06 SAMPLE_07 SAMPLE_08 SAMPLE_09 SAMPLE_10 SAMPLE_11 SAMPLE_12 SAMPLE_13 SAMPLE_14 SAMPLE_15 SAMPLE_16 SAMPLE_17 SAMPLE_18 SAMPLE_19 SAMPLE_20 SAMPLE_21 SAMPLE_22; do
+    for RES in 10000 5000 2000; do
+        RES_KB=$(( RES / 1000 ))
+        echo "Using resolution ${RES} bp, which is ${RES_KB} kb. Analyzing sample ${SAMPLE}."
+        
+        ./Venn_Interactions.r \
+            --FileList=<path>/FULL_SAMPLES/${SAMPLE}/fithic/${RES}/${SAMPLE}_${RES}.bedpe,<path>/FULL_SAMPLES/loops/loops_${RES_KB}kb${SAMPLE}.bedpe \
+            --HeaderList=0,1 --offset=0 \
+            --Labels=${SAMPLE}_FitHiC,${SAMPLE}_HiCCUPs \
+            --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ \
+            --Title="${SAMPLE}_${RES_KB}kb_loopcaller_intersects"
+    done
+done
+
+# A loop to go through all samples and compare their results across Hiccups & Fithic, at different resolutions. UPDATED version post FitHiC loop call changes:
+for SAMPLE in SAMPLE_01 SAMPLE_02 SAMPLE_03 SAMPLE_04 SAMPLE_05 SAMPLE_06 SAMPLE_07 SAMPLE_08 SAMPLE_09 SAMPLE_10 SAMPLE_11 SAMPLE_12 SAMPLE_13 SAMPLE_14 SAMPLE_15 SAMPLE_16 SAMPLE_17 SAMPLE_18 SAMPLE_19 SAMPLE_20 SAMPLE_21 SAMPLE_22; do
+    for RES in 10000 5000 2000; do
+        RES_KB=$(( RES / 1000 ))
+        echo "Using resolution ${RES} bp, which is ${RES_KB} kb. Analyzing sample ${SAMPLE}."
+        
+        ./Venn_Interactions.r \
+            --FileList=<path>/FULL_SAMPLES/FITHIC_2026/LOOPS/BEDPES/${SAMPLE}.fithic.${RES}.loops.bedpe,<path>/FULL_SAMPLES/loops/loops_${RES_KB}kb${SAMPLE}.bedpe \
+            --HeaderList=1,1 --offset=0 \
+            --Labels=${SAMPLE}_FitHiC,${SAMPLE}_HiCCUPs \
+            --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ \
+            --Title="${SAMPLE}_${RES_KB}kb_loopcaller_intersects"
+    done
+done
+
+
+#Rest of comparisons are 10kb resolution only
+RES=10000
+RES_KB=10
+
+#Compare across HiCCUPS for AFR vs. EUR
+./Venn_Interactions.r --FileList=<path>/FULL_SAMPLES/loops/AFR_aggregated_merged_10kb_HICCUPS_loops.bedpe,<path>/FULL_SAMPLES/loops/EUR_aggregated_merged_10kb_HICCUPS_loops.bedpe --HeaderList=1,1 --Labels=AFR_HICCUPS,EUR_HICCUPS --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ --Title="AFR_vs_EUR_HICCUPS_intersects"
+
+#Compare across FitHiC for AFR vs. EUR
+./Venn_Interactions.r --FileList=<path>/FULL_SAMPLES/loops/AFR_aggregated_merged_10kb_FitHiC_loops.bedpe,<path>/FULL_SAMPLES/loops/EUR_aggregated_merged_10kb_FitHiC_loops.bedpe --HeaderList=1,1 --Labels=AFR_FitHiC,EUR_FitHiC --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ --Title="AFR_vs_EUR_FitHiC_intersects"
+
+#Compare across Ancestries for merged loops for both modalities
+./Venn_Interactions.r --FileList=<path>/FULL_SAMPLES/loops/ALL_AFR_aggregated_merged_10kb_loops.bedpe,<path>/FULL_SAMPLES/loops/ALL_EUR_aggregated_merged_10kb_loops.bedpe --HeaderList=1,1 --Labels=AFRloops,EURloops --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ --Title="AFR_vs_EUR_all_intersects_10kb"
+
+#Compare across Methods for all samples' merged loops at once
+./Venn_Interactions.r --FileList=<path>/FULL_SAMPLES/loops/ALL_aggregated_merged_10kb_FitHiC_loops.bedpe,<path>/FULL_SAMPLES/loops/ALL_aggregated_merged_10kb_HICCUPS_loops.bedpe --HeaderList=1,1 --Labels=FitHiC,HICCUPS --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ --Title="FitHiC_vs_HICCUPS_ALL_10kb"
+
+### Comparisons of ALL merged loops across ancestries and methods at 10kb against each of the E2G and HiChIP samples:
+for FILE in Endothelium.EnhancerPredictionsThresholded.bedpe Fibroblast.EnhancerPredictionsThresholded.bedpe Myeloid.EnhancerPredictionsThresholded.bedpe VSMC_encode_e2g_predictions_threshold.171.bedpe; do
+  ./Venn_Interactions.r --FileList=<path>/FULL_SAMPLES/loops/ALL_ALL_aggregated_merged_10kb_loops.bedpe,<path>/FULL_SAMPLES/loops/MultiomeHiC_revisions/E2G/${FILE} --HeaderList=1,1 --Labels=HiCLoops,E2G_${FILE} --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ --Title="ALL_vs_E2G_${FILE}_intersects"
+done
+
+for FILE in FITHiChIP_EC_5kb.interactions_FitHiC_Q0.01_MergeNearContacts_filteredwDistance.bed FITHiChIP_SMC_5kb.interactions_FitHiC_Q0.01_MergeNearContacts_filteredwDistance.bed; do
+  ./Venn_Interactions.r --FileList=<path>/FULL_SAMPLES/loops/ALL_ALL_aggregated_merged_10kb_loops.bedpe,<path>/FULL_SAMPLES/loops/MultiomeHiC_revisions/HiChIP_bedpe/${FILE} --HeaderList=1,1 --Labels=HiCLoops,HiCHIP_${FILE} --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ --Title="ALL_vs_HiChIP_${FILE}_intersects"
+done
+
+#Repeat for ONLY the loops shared between HiCCUPS and FitHiC:
+for FILE in Endothelium.EnhancerPredictionsThresholded.bedpe Fibroblast.EnhancerPredictionsThresholded.bedpe Myeloid.EnhancerPredictionsThresholded.bedpe VSMC_encode_e2g_predictions_threshold.171.bedpe; do
+  ./Venn_Interactions.r --FileList=<path>/FULL_SAMPLES/INTERSECTS/FitHiC_vs_HICCUPS_ALL_10kb_Shared_Loops.bed,<path>/FULL_SAMPLES/loops/MultiomeHiC_revisions/E2G/${FILE} --HeaderList=1,1 --Labels=HiCLoops,E2G_${FILE} --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ --Title="SHARED_ALL_vs_E2G_${FILE}_intersects"
+done
+
+for FILE in FITHiChIP_EC_5kb.interactions_FitHiC_Q0.01_MergeNearContacts_filteredwDistance.bed FITHiChIP_SMC_5kb.interactions_FitHiC_Q0.01_MergeNearContacts_filteredwDistance.bed; do
+  ./Venn_Interactions.r --FileList=<path>/FULL_SAMPLES/INTERSECTS/FitHiC_vs_HICCUPS_ALL_10kb_Shared_Loops.bed,<path>/FULL_SAMPLES/loops/MultiomeHiC_revisions/HiChIP_bedpe/${FILE} --HeaderList=1,1 --Labels=HiCLoops,HiCHIP_${FILE} --OutDir=<path>/FULL_SAMPLES/INTERSECTS/ --Title="SHARED_ALL_vs_HiChIP_${FILE}_intersects"
+done
+```
+
+## Calculate inferred max resolutions using HiCRes at the given sequencing depth
+```{r}
+#Get all sample IDs in a vector
+samples <- c(SAMPLE_01, SAMPLE_02, SAMPLE_03, SAMPLE_04, SAMPLE_05, SAMPLE_06, SAMPLE_07, SAMPLE_08, SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22, "SAMPLE_05_old")
+
+# Set up a function
+reso_resolver <- function(SAMP){
+  vars <- fread(paste0("<path>/FULL_SAMPLES/hicres_results/", SAMP, "_HiCRes_outputs/equation.txt"), skip=1)
+  a <- vars$V3[1]
+  b <- vars$V3[2]
+  c <- vars$V3[3]
+  d <- vars$V3[4]
+  READS <- fread(list.files(paste0("<path>/FULL_SAMPLES/hicres_results/QC_outputs/", SAMP, "_QC_outputs/"), pattern="\\.txt$", full.names=TRUE)[1]) %>% dplyr::select(Valid_pairs)
+
+  
+  #Fromula provided by HiCRes paper (note formula as given in file is off, parentheses broken!)
+  result <- (((1000)^(1/3) - d - c * (READS)^(1/3))/( a * (READS)^(1/3) + b)) ^ 3
+  print(paste0(SAMP, " is at ", result, " on the basis of ", READS, " valid read pairs."))
+}
+
+#Iterate across all samples to get max inferred resolution
+for (SAMP in samples) {
+  reso_resolver(SAMP)  
+}
+```
+
+## Merge significant loops identified by FitHiC:
+```{r}
+# Set working directory
+setwd("<path>/FULL_SAMPLES/")
+
+# List of samples and resolutions, as well as individual sample groupings
+samples <- c(SAMPLE_01, SAMPLE_02, SAMPLE_03, SAMPLE_04, SAMPLE_05, SAMPLE_06, SAMPLE_07, SAMPLE_08, SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22)
+coronary <- c(SAMPLE_01, SAMPLE_05, SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22)
+cardiomyocyte <- c(SAMPLE_01, SAMPLE_05)
+endothelial <- c(SAMPLE_02, SAMPLE_06)
+fibroblast <- c(SAMPLE_03, SAMPLE_07)
+macrophage <- c(SAMPLE_04, SAMPLE_08)
+resolutions <- c(2000, 5000, 10000)
+
+header <- c("chr1", "fragmentMid1", "chr2", "fragmentMid2", "contactCount", "p-value", "q-value", "bias1", "bias2", "ExpCC")
+
+# Define the processing function
+process_loops <- function(sample_group, group_name, resolutions) {
+  for (res in resolutions) {
+    all_loops <- list()
+    
+    # Loop over each sample in the group
+    for (sample in sample_group) {
+      
+      # Construct file path for the filtered significant loops file
+      file_path <- paste0("./", sample, "/fithic/", res, "/FitHiC.spline_pass1.res", res, ".significances.filtered.txt")
+      
+      # Check if the file exists
+      if (file.exists(file_path)) {
+        # Read in filtered loop file & provide appropriate column names
+        test <- fread(file_path, header = FALSE, data.table = FALSE)
+        colnames(test) <- header
+        
+        # Ensure correct data types
+        test$chr1 <- as.character(test$chr1)
+        test$fragmentMid1 <- as.numeric(test$fragmentMid1)
+        test$chr2 <- as.character(test$chr2)
+        test$fragmentMid2 <- as.numeric(test$fragmentMid2)
+        
+        # Diagnose problematic entries
+        problematic_contact_count <- test$contactCount[!grepl("^[0-9]+(\\.[0-9]+)?$", test$contactCount)]
+        if (length(problematic_contact_count) > 0) {
+          message(paste("Non-numeric contactCount values found in sample", sample, "and resolution", res, ":", problematic_contact_count))
+        }
+        
+        # Handle non-numeric values in contactCount by converting them to NA
+        test$contactCount <- as.numeric(test$contactCount)
+        test$`q-value` <- as.numeric(test$`q-value`)
+        test$ExpCC <- as.numeric(test$ExpCC)
+        
+        # Create a unique ID for each loop
+        test$ID <- paste(test$chr1, test$fragmentMid1, test$fragmentMid2, sep = "-")
+        
+        # Annotate with the sample ID
+        test$Samples <- as.character(sample)
+        
+        # Append to the list of loops for this resolution
+        all_loops[[length(all_loops) + 1]] <- test
+      } else {
+        message(paste("File not found for sample", sample, "and resolution", res))
+      }
+    }
+    
+    # Combine all data frames for this resolution into one
+    combined_loops <- bind_rows(all_loops)
+    
+    # Ensure Samples column is character type before summarising
+    combined_loops$Samples <- as.character(combined_loops$Samples)
+    
+    # Collapse to union list of all loops, merging loops that are the same across samples
+    collapsed_loops <- combined_loops %>%
+      group_by(ID) %>%
+      summarise(
+        chr1 = unique(chr1),
+        fragmentMid1 = unique(fragmentMid1),
+        fragmentMid2 = unique(fragmentMid2),
+        contactCount = sum(contactCount, na.rm = TRUE),  # Sum of contact counts from different samples
+        ExpCC = sum(ExpCC, na.rm = TRUE),  # Sum of ExpCC from different samples
+        `q-value` = min(`q-value`, na.rm = TRUE),  # Keep the most significant q-value
+        Samples = paste(Samples, collapse = ",")
+      )
+    
+    # Convert to BEDPE format
+    bedpe_loops <- collapsed_loops %>%
+      mutate(
+        start1 = fragmentMid1 - (res / 2),
+        end1 = fragmentMid1 + (res / 2),
+        start2 = fragmentMid2 - (res / 2),
+        end2 = fragmentMid2 + (res / 2),
+        name = ID,
+        score = `q-value`,
+        strand1 = ".",
+        strand2 = "."
+      ) %>%
+      select(
+        chr1, start1, end1, chr1, start2, end2, name, score, strand1, strand2,
+        Samples, contactCount, ExpCC
+      )
+    
+    bedpe_loops$total_samp <- str_count(bedpe_loops$Samples, ",")
+    
+    # Format the start and end columns to avoid scientific notation
+    bedpe_loops$start1 <- format(bedpe_loops$start1, scientific = FALSE)
+    bedpe_loops$end1 <- format(bedpe_loops$end1, scientific = FALSE)
+    bedpe_loops$start2 <- format(bedpe_loops$start2, scientific = FALSE)
+    bedpe_loops$end2 <- format(bedpe_loops$end2, scientific = FALSE)
+    
+    #Filter to loops found in >1 sample
+    filtloops <- bedpe_loops[which(bedpe_loops$total_samp>=1),]
+    fwrite(select(filtloops, -total_samp), paste0(group_name, "_merged_filt_loops_", res, ".bedpe"), sep="\t", quote=F, row.names=F, col.names=T)
+    
+    # Save the BEDPE result for this group and resolution to a file
+    output_file <- paste0(group_name, "_loops_", res, ".bedpe")
+    write.table(bedpe_loops, output_file, sep = "\t", row.names = FALSE, quote = FALSE, col.names = TRUE)
+    
+    message(paste("Finished processing", group_name, "at resolution", res))
+  }
+}
+
+# Apply the function to different sample groupings
+process_loops(samples, "ALL", resolutions)
+process_loops(coronary, "coronary", resolutions)
+process_loops(cardiomyocyte, "cardiomyocyte", resolutions)
+process_loops(endothelial, "endothelial", resolutions)
+process_loops(fibroblast, "fibroblast", resolutions)
+process_loops(macrophage, "macrophage", resolutions)
+```
+
+## Look at all fithic significant loop calls, both checking on total #s and assessing overlaps:
+```{r}
+#Sample listing
+samples <- c(SAMPLE_01, SAMPLE_02, SAMPLE_03, SAMPLE_04, SAMPLE_05, SAMPLE_06, SAMPLE_07, SAMPLE_08, SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22)
+
+#Function to count individual loops
+sigloop_counter <- function(sample, res) {
+  myloops <- fread(paste0("<path>/FULL_SAMPLES/", sample, "/fithic/", res, "/FitHiC.spline_pass1.res", res, ".significances.filtered.txt"))
+  print(paste0("Before filtering out self-loops, ", sample, " has ", nrow(myloops), " significant loops at ", res, " bp."))
+  myloops <- myloops[V2 != V4, ]
+  print(paste0("After filtering out self-loops, ", sample, " has ", nrow(myloops), " significant loops at ", res, " bp."))
+}
+
+#Count individual loops
+lapply(samples, sigloop_counter, res=10000)
+lapply(samples, sigloop_counter, res=5000)
+lapply(samples, sigloop_counter, res=2000)
+
+#Function to count merged loops, as well as visually assessing and then potentially providing a filtering based on a certain number of samples
+mergeloop_counter <- function(grouping, res, n){
+  myloops <- fread(paste0("<path>/FULL_SAMPLES/", grouping, "_loops_", res, ".bedpe"))
+  print(paste0("Before filtering out self-loops, ", grouping, " has ", nrow(myloops), " significant loops at ", res, " bp."))
+  myloops <- myloops[start1 != start2, ]
+  print(paste0("After filtering out self-loops, ", grouping, " has ", nrow(myloops), " significant loops at ", res, " bp."))
+  
+  comma_counts <- str_count(myloops$Samples, ",")
+  mycounts <- table(comma_counts)
+  
+
+  plotcounts <- data.frame(identified=as.numeric(names(mycounts))+1, loops=as.numeric(mycounts))
+  p <- ggplot(plotcounts, aes(x=identified, y=loops)) + geom_bar(stat="identity") + xlab("# of Samples Inferring Loop") + ylab("Significant Loops") + ggtitle(paste0("Loop Counts X Samples Where Significant, ", grouping, " Loops, ", res/1000, "kb"))  +
+  scale_x_continuous(breaks = seq(min(plotcounts$identified), max(plotcounts$identified), by = 1))
+  print(p)
+  print(plotcounts)
+  plotcounts <- plotcounts[which(plotcounts$identified>=n),]
+  print(sum(plotcounts$loops))
+}
+
+mergeloop_counter("ALL", 10000, 11)
+mergeloop_counter("ALL", 5000, 11)
+mergeloop_counter("ALL", 2000, 11)
+
+mergeloop_counter("coronary", 10000, 7)
+mergeloop_counter("coronary", 5000, 7)
+mergeloop_counter("coronary", 2000, 7)
+
+mergeloop_counter("cardiomyocyte", 10000, 2)
+mergeloop_counter("cardiomyocyte", 5000, 2)
+mergeloop_counter("cardiomyocyte", 2000, 2)
+
+mergeloop_counter("endothelial", 10000, 2)
+mergeloop_counter("endothelial", 5000, 2)
+mergeloop_counter("endothelial", 2000, 2)
+
+mergeloop_counter("fibroblast", 10000, 2)
+mergeloop_counter("fibroblast", 5000, 2)
+mergeloop_counter("fibroblast", 2000, 2)
+
+mergeloop_counter("macrophage", 10000, 2)
+mergeloop_counter("macrophage", 5000, 2)
+mergeloop_counter("macrophage", 2000, 2)
+```
+
+## Write all significant loops into a reasonable BEDPE format for plotting:
+```{r}
+# Set working directory
+setwd("<path>/FULL_SAMPLES/")
+
+# List of samples and resolutions, as well as individual sample groupings
+samples <- c(SAMPLE_01, SAMPLE_02, SAMPLE_03, SAMPLE_04, SAMPLE_05, SAMPLE_06, SAMPLE_07, SAMPLE_08, SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22)
+resolutions <- c(2000, 5000, 10000)
+
+header <- c("chr1", "fragmentMid1", "chr2", "fragmentMid2", "contactCount", "p-value", "q-value", "bias1", "bias2", "ExpCC")
+
+BEDPE_formatter <- function(sampleID, resolution) {
+        test <- fread(paste0("<path>/FULL_SAMPLES/", sampleID, "/fithic/", resolution, "/FitHiC.spline_pass1.res", resolution, ".significances.filtered.txt"), header = FALSE, data.table = FALSE)
+        colnames(test) <- header
+        
+        # Ensure correct data types
+        test$chr1 <- as.character(test$chr1)
+        test$fragmentMid1 <- as.numeric(test$fragmentMid1)
+        test$chr2 <- as.character(test$chr2)
+        test$fragmentMid2 <- as.numeric(test$fragmentMid2)
+        
+        # Diagnose problematic entries
+        problematic_contact_count <- test$contactCount[!grepl("^[0-9]+(\\.[0-9]+)?$", test$contactCount)]
+        if (length(problematic_contact_count) > 0) {
+          message(paste("Non-numeric contactCount values found in sample", sample, "and resolution", res, ":", problematic_contact_count))
+        }
+        
+        # Handle non-numeric values in contactCount by converting them to NA
+        test$contactCount <- as.numeric(test$contactCount)
+        test$`q-value` <- as.numeric(test$`q-value`)
+        test$ExpCC <- as.numeric(test$ExpCC)
+        
+        # Create a unique ID for each loop
+        test$ID <- paste(test$chr1, test$fragmentMid1, test$fragmentMid2, sep = "-")
+        
+        # Annotate with the sample ID
+        test$Samples <- as.character(sampleID)
+        
+        bedpe_loops <- test %>%
+      mutate(
+        start1 = fragmentMid1 - (resolution / 2),
+        end1 = fragmentMid1 + (resolution / 2),
+        start2 = fragmentMid2 - (resolution / 2),
+        end2 = fragmentMid2 + (resolution / 2),
+        name = ID,
+        score = `q-value`,
+        strand1 = ".",
+        strand2 = "."
+      ) %>%
+      select(
+        chr1, start1, end1, chr2, start2, end2, name, score, strand1, strand2,
+        Samples, contactCount, ExpCC
+      )
+    
+    # Format the start and end columns to avoid scientific notation
+    bedpe_loops$start1 <- format(bedpe_loops$start1, scientific = FALSE)
+    bedpe_loops$end1 <- format(bedpe_loops$end1, scientific = FALSE)
+    bedpe_loops$start2 <- format(bedpe_loops$start2, scientific = FALSE)
+    bedpe_loops$end2 <- format(bedpe_loops$end2, scientific = FALSE)
+    
+    # Save the BEDPE result for this group and resolution to a file
+    output_file <- paste0("<path>/FULL_SAMPLES/", sampleID, "/fithic/", resolution, "/", sampleID, "_loops_", resolution, ".bedpe")
+    write.table(bedpe_loops, output_file, sep = "\t", row.names = FALSE, quote = FALSE, col.names = TRUE)
+}
+
+#Iterate across all samples and resolutions to get bedpe files for each
+for (SAMP in samples) {
+  for(RES in resolutions){
+    BEDPE_formatter(SAMP, RES)
+  }
+}
+```
+
+## Compute Jaccard Indices across samples at a given resolution, and heatmap cluster:
+```{unix}
+#!/bin/bash
+
+# Define your samples and resolutions
+SAMPLES=("SAMPLE_01" "SAMPLE_02" "SAMPLE_03" "SAMPLE_04" "SAMPLE_05" "SAMPLE_06" "SAMPLE_07" "SAMPLE_08")
+RESOLUTIONS=("2000" "5000" "10000")
+
+# Define the directory where your files are located
+FILE_DIR="<path>/FULL_SAMPLES"
+
+# Define the output file for Jaccard indices
+OUTPUT_FILE="jaccard_indices.txt"
+
+# Create the output file and write the header
+echo -e "Samp1\tSamp2\tJaccard" > "$OUTPUT_FILE"
+
+# Function to convert your data to bedPE format
+convert_to_bedpe() {
+    local infile=$1
+    local outfile=$2
+    local resolution=$3
+    local half_window=$((resolution * 3 / 2))
+    awk -v hw="$half_window" -F',' 'NR>1 {
+        if ($1 != "chrM" && $3 != "chrM") {
+            start1 = $2 - hw
+            end1 = $2 + hw
+            start2 = $4 - hw
+            end2 = $4 + hw
+            if (start1 < 0) start1 = 0
+            if (start2 < 0) start2 = 0
+            print $1 "\t" int(start1) "\t" int(end1) "\t" $3 "\t" int(start2) "\t" int(end2) "\tname\t.\t.\t."
+        }
+    }' "$infile" > "$outfile"
+}
+
+# Function to compute Jaccard index
+compute_jaccard() {
+    local file1=$1
+    local file2=$2
+    bedtools jaccard -a "$file1" -b "$file2" | awk 'NR==2 {print $3}'  # Get the Jaccard index value
+}
+
+# Iterate over samples and resolutions
+for sample1 in "${SAMPLES[@]}"; do
+    for resolution1 in "${RESOLUTIONS[@]}"; do
+        file1="${FILE_DIR}/${sample1}/fithic/${resolution1}/${sample1}.sigloops.${resolution1}.txt"
+        bedpe1="${FILE_DIR}/${sample1}/fithic/${resolution1}/${sample1}_${resolution1}.bedpe"
+        convert_to_bedpe "$file1" "$bedpe1" "$resolution1"
+
+        for sample2 in "${SAMPLES[@]}"; do
+            for resolution2 in "${RESOLUTIONS[@]}"; do
+                if [ "$sample1" != "$sample2" ] || [ "$resolution1" != "$resolution2" ]; then
+                    file2="${FILE_DIR}/${sample2}/fithic/${resolution2}/${sample2}.sigloops.${resolution2}.txt"
+                    bedpe2="${FILE_DIR}/${sample2}/fithic/${resolution2}/${sample2}_${resolution2}.bedpe"
+                    convert_to_bedpe "$file2" "$bedpe2" "$resolution2"
+
+                    jaccard_index=$(compute_jaccard "$bedpe1" "$bedpe2")
+                    echo -e "${sample1}_${resolution1}\t${sample2}_${resolution2}\t$jaccard_index" >> "$OUTPUT_FILE"
+                fi
+            done
+        done
+    done
+done
+```
+
+## Visualize Jaccard results
+```{r}
+setwd("<path>/FULL_SAMPLES/")
+jaccard_data <- fread("jaccard_indices.txt")
+
+#Add some metadata annotations
+coronaries <- c(SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22, SAMPLE_05)
+AA <- c(SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15)
+EUR <- c(SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22, SAMPLE_05)
+CM <- c(SAMPLE_01, SAMPLE_05)
+ENDO <- c(SAMPLE_02, SAMPLE_06)
+FIBRO <- c(SAMPLE_03, SAMPLE_07)
+MACRO <- c(SAMPLE_04, SAMPLE_08)
+
+jaccard_data$Samp1 <- ifelse(jaccard_data$Samp1 %in% coronaries, paste0(jaccard_data$Samp1, "_", "coronary"), jaccard_data$Samp1)
+jaccard_data$Samp2 <- ifelse(jaccard_data$Samp2 %in% coronaries, paste0(jaccard_data$Samp2, "_", "coronary"), jaccard_data$Samp2)
+
+jaccard_data$Samp1 <- ifelse(gsub("_.*", "", jaccard_data$Samp1) %in% AA, paste0(jaccard_data$Samp1, "_", "AA"), jaccard_data$Samp1)
+jaccard_data$Samp2 <- ifelse(gsub("_.*", "", jaccard_data$Samp2) %in% AA, paste0(jaccard_data$Samp2, "_", "AA"), jaccard_data$Samp2)
+
+jaccard_data$Samp1 <- ifelse(gsub("_.*", "", jaccard_data$Samp1) %in% EUR, paste0(jaccard_data$Samp1, "_", "EUR"), jaccard_data$Samp1)
+jaccard_data$Samp2 <- ifelse(gsub("_.*", "", jaccard_data$Samp2) %in% EUR, paste0(jaccard_data$Samp2, "_", "EUR"), jaccard_data$Samp2)
+
+jaccard_data$Samp1 <- ifelse(jaccard_data$Samp1 %in% CM, paste0(jaccard_data$Samp1, "_", "CM"), jaccard_data$Samp1)
+jaccard_data$Samp2 <- ifelse(jaccard_data$Samp2 %in% CM, paste0(jaccard_data$Samp2, "_", "CM"), jaccard_data$Samp2)
+
+jaccard_data$Samp1 <- ifelse(jaccard_data$Samp1 %in% ENDO, paste0(jaccard_data$Samp1, "_", "ENDO"), jaccard_data$Samp1)
+jaccard_data$Samp2 <- ifelse(jaccard_data$Samp2 %in% ENDO, paste0(jaccard_data$Samp2, "_", "ENDO"), jaccard_data$Samp2)
+
+jaccard_data$Samp1 <- ifelse(jaccard_data$Samp1 %in% FIBRO, paste0(jaccard_data$Samp1, "_", "FIBRO"), jaccard_data$Samp1)
+jaccard_data$Samp2 <- ifelse(jaccard_data$Samp2 %in% FIBRO, paste0(jaccard_data$Samp2, "_", "FIBRO"), jaccard_data$Samp2)
+
+jaccard_data$Samp1 <- ifelse(jaccard_data$Samp1 %in% MACRO, paste0(jaccard_data$Samp1, "_", "MACRO"), jaccard_data$Samp1)
+jaccard_data$Samp2 <- ifelse(jaccard_data$Samp2 %in% MACRO, paste0(jaccard_data$Samp2, "_", "MACRO"), jaccard_data$Samp2)
+
+
+#2kb
+# Convert to a wide matrix format where rows and columns represent samples
+jaccard_matrix <- reshape2::acast(jaccard_data[which(jaccard_data$Resolution==2000)], Samp1 ~ Samp2, value.var = "Jaccard")
+# Ensure that the matrix is symmetric (optional, depending on your data)
+jaccard_matrix[lower.tri(jaccard_matrix)] <- t(jaccard_matrix)[lower.tri(jaccard_matrix)]
+jaccard_matrix[is.na(jaccard_matrix)] <- 1  # Replace NA values with 1 as they are for self-identity; this didn't work correctly on my first set of data as we also had some NAs across samples where a chromosome existed in one but not the other (specifically chrY, so I removed this from all analyses)
+
+pheatmap(
+  jaccard_matrix,
+  cluster_rows = TRUE,   # Enable hierarchical clustering for rows
+  cluster_cols = TRUE,   # Enable hierarchical clustering for columns
+  scale = "none",        # No scaling by default (use "row" or "column" if desired)
+  color = colorRampPalette(c("blue", "white", "red"))(50),  # Custom color scale
+  main = "Heatmap with Hierarchical Clustering"
+)
+
+#5kb
+# Convert to a wide matrix format where rows and columns represent samples
+jaccard_matrix <- reshape2::acast(jaccard_data[which(jaccard_data$Resolution==5000)], Samp1 ~ Samp2, value.var = "Jaccard")
+# Ensure that the matrix is symmetric (optional, depending on your data)
+jaccard_matrix[lower.tri(jaccard_matrix)] <- t(jaccard_matrix)[lower.tri(jaccard_matrix)]
+jaccard_matrix[is.na(jaccard_matrix)] <- 1  # Replace NA values with 1 as they are for self-identity; this didn't work correctly on my first set of data as we also had some NAs across samples where a chromosome existed in one but not the other (specifically chrY, so I removed this from all analyses)
+
+pheatmap(
+  jaccard_matrix,
+  cluster_rows = TRUE,   # Enable hierarchical clustering for rows
+  cluster_cols = TRUE,   # Enable hierarchical clustering for columns
+  scale = "none",        # No scaling by default (use "row" or "column" if desired)
+  color = colorRampPalette(c("blue", "white", "red"))(50),  # Custom color scale
+  main = "Heatmap with Hierarchical Clustering"
+)
+
+#10kb
+# Convert to a wide matrix format where rows and columns represent samples
+jaccard_matrix <- reshape2::acast(jaccard_data[which(jaccard_data$Resolution==10000)], Samp1 ~ Samp2, value.var = "Jaccard")
+# Ensure that the matrix is symmetric (optional, depending on your data)
+jaccard_matrix[lower.tri(jaccard_matrix)] <- t(jaccard_matrix)[lower.tri(jaccard_matrix)]
+jaccard_matrix[is.na(jaccard_matrix)] <- 1  # Replace NA values with 1 as they are for self-identity; this didn't work correctly on my first set of data as we also had some NAs across samples where a chromosome existed in one but not the other (specifically chrY, so I removed this from all analyses)
+
+pheatmap(
+  jaccard_matrix,
+  cluster_rows = TRUE,   # Enable hierarchical clustering for rows
+  cluster_cols = TRUE,   # Enable hierarchical clustering for columns
+  scale = "none",        # No scaling by default (use "row" or "column" if desired)
+  color = colorRampPalette(c("blue", "white", "red"))(50),  # Custom color scale
+  main = "Heatmap with Hierarchical Clustering"
+)
+```
+
+## Fix human GFF file to GTF file for Hi-C visualization
+```{r}
+setwd("<path>/FULL_SAMPLES/")
+
+# Read the GTF file into a data frame
+gtf <- read.table("hg38.refGene.gtf", sep="\t", header=FALSE, stringsAsFactors=FALSE, quote="")
+gtf <- gtf[!grepl("_alt|_random|_fix|chrUn|chrM", gtf$V1, perl=TRUE),]
+
+# Filter to include only transcripts!!
+transcripts <- gtf %>% filter(V3 == "transcript")
+
+# Extract gene_id from the attribute column (V9)
+transcripts <- transcripts %>% mutate(gene_id = paste(V1, sub('.*gene_id "([^"]+)".*', '\\1', V9), sep=":"), transcript_id = sub('.*transcript_id "([^"]+)".*', '\\1', V9))
+
+# Collapse transcripts into single gene entries
+collapsed <- transcripts %>%
+  group_by(transcript_id) %>%
+  dplyr::summarize(
+    chr=first(V1),
+    start = min(V4),
+    end = max(V5),
+    strand = first(V7),
+    gene_id = first(gene_id)
+  )
+
+# Create the collapsed GTF format
+collapsed_gtf <- collapsed %>%
+  dplyr::mutate(
+    source = "collapsed",
+    feature = "gene",
+    score = ".",
+    frame = ".",
+    attribute = paste0('gene_id "', gsub("chr.*:", "", gene_id), '"; gene_source "ittai";')
+  ) %>% select(chr, source, feature, start, end, score, strand, frame, attribute)
+
+collapsed_gtf <- as.data.frame(collapsed_gtf) %>% arrange(chr, start) %>% distinct()
+
+# Write to a new GTF file
+write.table(collapsed_gtf, "hg38.refGene.collapsed.gtf", sep="\t", quote=FALSE, row.names=FALSE, col.names=FALSE)
+
+#The above DID work but still leaves more copies per gene than I would like, try an alternative and hopefully simpler approach:
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(dplyr)
+
+txdb <- TxDb.Hsapiens.UCSC.hg38.knownGene
+
+genes_df <- genes(txdb) %>%
+  as.data.frame()
+
+gene_symbols <- select(org.Hs.eg.db,
+                       keys = genes_df$gene_id,
+                       columns = c("SYMBOL"),
+                       keytype = "ENTREZID")
+
+# Merge the gene symbols with the genes dataframe
+genes_df <- merge(genes_df, gene_symbols, by.x = "gene_id", by.y = "ENTREZID")
+
+gtf_df <- genes_df %>%
+  mutate(seqname = seqnames,
+         source = "hg38",
+         feature = "gene",
+         start = start,
+         end = end,
+         score = ".",
+         strand = strand,
+         frame = ".",
+         gene_id = SYMBOL) %>%
+  dplyr::select(seqname, source, feature, start, end, score, strand, frame, gene_id) %>% arrange(seqname, start)
+
+gtf_df <- gtf_df[-which(is.na(gtf_df$gene_id)),]
+gtf_df$gene_id <- paste0(' gene_id "', gtf_df$gene_id, '"; gene_source "ittai";')
+
+# Rename columns to match GTF format
+colnames(gtf_df) <- c("seqname", "source", "feature", "start", "end", "score", "strand", "frame", "gene_id")
+write.table(gtf_df, "hg38.custom.geneBodyOnly.gtf", sep="\t", quote=FALSE, row.names=FALSE, col.names=FALSE)
+```
+
+## Differential TADs using TADCompare
+### First, find consensus TAD boundaries across ancestries:
+```{r}
+#Function to read-in data from HiC-Pro:
+TAD_dat_reader <- function(path, res){
+  bed <- read.table(paste0(path, ".", res, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path, ".", res, ".matrix"))
+  dat <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat <- dat$cis
+  dat <- dat[-grep("Un|alt|random|X|Y|M", names(dat), perl=T)]
+  
+  sparse_mat <- lapply(1:length(dat), function(z){
+    x <- dat[[z]]
+    chr <- x[,1][1]
+    x <- x[c(2,5,7)]
+    return(list(x, chr))
+  })
+  return(sparse_mat)
+}
+
+SSAMPLE_16 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_16/raw/SAMPLE_16", 50000)
+SSAMPLE_17 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_17/raw/SAMPLE_17", 50000)
+SSAMPLE_18 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_18/raw/SAMPLE_18", 50000)
+SSAMPLE_19 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_19/raw/SAMPLE_19", 50000)
+SSAMPLE_20 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_20/raw/SAMPLE_20", 50000)
+SSAMPLE_21 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_21/raw/SAMPLE_21", 50000)
+SSAMPLE_22 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_22/raw/SAMPLE_22", 50000)
+SSAMPLE_05 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_05/raw/SAMPLE_05", 50000)
+
+SSAMPLE_09 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_09/raw/SAMPLE_09", 50000)
+SSAMPLE_10 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_10/raw/SAMPLE_10", 50000)
+SSAMPLE_11 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_11/raw/SAMPLE_11", 50000)
+SSAMPLE_12 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_12/raw/SAMPLE_12", 50000)
+SSAMPLE_13 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_13/raw/SAMPLE_13", 50000)
+SSAMPLE_14 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_14/raw/SAMPLE_14", 50000)
+SSAMPLE_15 <- TAD_dat_reader("<path>/FULL_SAMPLES/SAMPLE_15/raw/SAMPLE_15", 50000)
+
+#This works, need to wrap it for length of the samples (22):
+EUR_TAD <- ConsensusTADs(c(SSAMPLE_16[[21]][1], SSAMPLE_17[[21]][1], SSAMPLE_18[[21]][1], SSAMPLE_19[[21]][1], SSAMPLE_20[[21]][1], SSAMPLE_21[[21]][1], SSAMPLE_22[[21]][1], SSAMPLE_05[[21]][1]), resolution=50000)
+
+results <- lapply(1:22, function(i) {
+  ConsensusTADs(c(SSAMPLE_16[[i]][1], SSAMPLE_17[[i]][1], SSAMPLE_18[[i]][1], SSAMPLE_19[[i]][1], SSAMPLE_20[[i]][1], SSAMPLE_21[[i]][1], SSAMPLE_22[[i]][1], SSAMPLE_05[[i]][1]), resolution=50000)
+})
+
+# Extract the $Consensus element from each result and combine them into a list
+consensus_list <- lapply(results, function(x) x$Consensus)
+
+# Combine the list into a data frame
+df <- do.call(rbind, consensus_list)
+
+# Add a new column for the chromosome
+df$chromosome <- rep(paste0("chr", 1:22), sapply(consensus_list, nrow))
+fwrite(df, "consensus_EUR_TADs.txt", sep="\t", quote=F, row.names=F, col.names=T)
+
+results_AFR <- lapply(1:22, function(i) {
+  ConsensusTADs(c(SSAMPLE_09[[i]][1], SSAMPLE_10[[i]][1], SSAMPLE_11[[i]][1], SSAMPLE_12[[i]][1], SSAMPLE_13[[i]][1], SSAMPLE_14[[i]][1], SSAMPLE_15[[i]][1]), resolution=50000)
+})
+
+# Extract the $Consensus element from each result and combine them into a list
+consensus_list_AFR <- lapply(results_AFR, function(x) x$Consensus)
+
+# Combine the list into a data frame
+df_AFR <- do.call(rbind, consensus_list_AFR)
+
+# Add a new column for the chromosome
+df_AFR$chromosome <- rep(paste0("chr", 1:22), sapply(consensus_list_AFR, nrow))
+
+# Write the data frame to a file
+fwrite(df_AFR, "consensus_AFR_TADs.txt", sep="\t", quote=F, row.names=F, col.names=T)
+```
+
+
+#Differential TAD testing
+```{r}
+# Function to read and format data
+read_format_data <- function(path, res) {
+  bed <- read.table(paste0(path, ".", res, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path, ".", res, ".matrix"))
+  dat <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat <- dat$cis
+  dat <- dat[-grep("Un|alt|random|X|Y|M", names(dat), perl=T)]
+  return(dat)
+}
+
+# Function to make pairwise comparisons
+compare_pairwise <- function(dat1, dat2) {
+  sparse_tads = lapply(1:length(dat1), function(z) {
+    x <- dat1[[z]]
+    y <- dat2[[z]]
+    
+    # Pull out chromosome
+    chr <- x[, 1][1]
+    # Subset to make three column matrix
+    x <- x[, c(2, 5, 7)]
+    y <- y[, c(2, 5, 7)]
+    
+    # Run SpectralTAD
+    comp <- TADCompare(x, y, resolution = 50000)
+    return(list("comp" = comp, "chr" = chr))
+  })
+  
+  diff_res <- lapply(sparse_tads, function(x) x[["comp"]])
+  chr <- lapply(sparse_tads, function(x) x[["chr"]])
+  names(diff_res) <- chr
+  return(diff_res)
+}
+
+# Example usage
+#dat1 <- read_format_data(path1, res)
+#dat2 <- read_format_data(path2, res)
+#result <- compare_pairwise(dat1, dat2)
+
+# List of paths to the AFR and EUR samples
+AFR_paths <- c("<path>/FULL_SAMPLES/SAMPLE_09/raw/SAMPLE_09", 
+               "<path>/FULL_SAMPLES/SAMPLE_10/raw/SAMPLE_10", 
+               "<path>/FULL_SAMPLES/SAMPLE_11/raw/SAMPLE_11", 
+               "<path>/FULL_SAMPLES/SAMPLE_12/raw/SAMPLE_12", 
+               "<path>/FULL_SAMPLES/SAMPLE_13/raw/SAMPLE_13", 
+               "<path>/FULL_SAMPLES/SAMPLE_14/raw/SAMPLE_14", 
+               "<path>/FULL_SAMPLES/SAMPLE_15/raw/SAMPLE_15")
+EUR_paths <- c("<path>/FULL_SAMPLES/SAMPLE_16/raw/SAMPLE_16", 
+               "<path>/FULL_SAMPLES/SAMPLE_17/raw/SAMPLE_17", 
+               "<path>/FULL_SAMPLES/SAMPLE_18/raw/SAMPLE_18", 
+               "<path>/FULL_SAMPLES/SAMPLE_19/raw/SAMPLE_19", 
+               "<path>/FULL_SAMPLES/SAMPLE_20/raw/SAMPLE_20", 
+               "<path>/FULL_SAMPLES/SAMPLE_21/raw/SAMPLE_21", 
+               "<path>/FULL_SAMPLES/SAMPLE_22/raw/SAMPLE_22", 
+               "<path>/FULL_SAMPLES/SAMPLE_05/raw/SAMPLE_05")
+
+# Extract the sample number IDs from the paths
+AFR_ids <- basename(AFR_paths)
+EUR_ids <- basename(EUR_paths)
+
+# Load the data for each sample
+AFR_samples <- lapply(AFR_paths, read_format_data, res = 50000)
+EUR_samples <- lapply(EUR_paths, read_format_data, res = 50000)
+
+# Initialize an empty list to store the results
+results <- list()
+
+# Loop over all AFR and EUR samples
+for (i in seq_along(AFR_samples)) {
+  for (j in seq_along(EUR_samples)) {
+    # Run compare_pairwise on the current pair of samples
+    result <- compare_pairwise(AFR_samples[[i]], EUR_samples[[j]])
+    # Add the result to the list, with a name indicating the pair of samples
+    results[[paste0("AFR", AFR_ids[i], "_EUR", EUR_ids[j])]] <- result
+  }
+}
+
+
+#Subset down to what we care about, $TAD_Frame, the first entry in each list entry that actually lists out the differential TAD boundaries (second entry lists ALL tested bins, first retains only those that are a boundary in at least one matrix). We really only care about these potential regions of difference, so just extract the first data frame in the list. The second will be similar but at all tested bins (most of which won't be a boundary in either sample!), and the last item is a ggplot2 stacked bar chart of a table of the "Type" column from the first data frame, so can be easily reconstructed (and indeed, I will want to, since it is done per-sample and per-chromosome now, but I will want at least merged across all chromosomes, if not merged across sample groups as well).
+# Initialize an empty list to store the data frames
+df_list <- list()
+
+# Iterate over the results list
+for (comparison_name in names(results)) {
+  comparison_results <- results[[comparison_name]]
+  
+  # Iterate over the chromosomes in each comparison result
+  for (chromosome_name in names(comparison_results)) {
+    chromosome_result <- comparison_results[[chromosome_name]]
+    
+    # Extract the TAD_Frame data frame and add the chromosome and comparison columns
+    df <- chromosome_result$TAD_Frame
+    df$Chromosome <- chromosome_name
+    df$Comparison <- comparison_name
+    
+    # Add the data frame to the list
+    df_list[[paste0(comparison_name, "_", chromosome_name)]] <- df
+  }
+}
+
+# Combine all the data frames into a single data frame
+final_df <- do.call(rbind, df_list)
+
+fwrite(final_df, "Final_differential_TAD_bounds.txt", sep="\t", quote=F, row.names=F, col.names=T)
+
+
+
+
+
+
+#Take a look at intra-ancestry comparisons:
+# Initialize an empty list to store the results_intra
+results_intra <- list()
+# Loop over all AFR samples for intra-group comparisons
+for (i in seq_along(AFR_samples)) {
+  for (j in i:seq_along(AFR_samples)) {
+    if (i != j) {
+      # Run compare_pairwise on the current pair of samples
+      result <- compare_pairwise(AFR_samples[[i]], AFR_samples[[j]])
+      # Add the result to the list, with a name indicating the pair of samples
+      results_intra[[paste0("AFR", AFR_ids[i], "_AFR", AFR_ids[j])]] <- result
+    }
+  }
+}
+
+# Loop over all EUR samples for intra-group comparisons
+for (i in seq_along(EUR_samples)) {
+  for (j in i:seq_along(EUR_samples)) {
+    if (i != j) {
+      # Run compare_pairwise on the current pair of samples
+      result <- compare_pairwise(EUR_samples[[i]], EUR_samples[[j]])
+      # Add the result to the list, with a name indicating the pair of samples
+      results_intra[[paste0("EUR", EUR_ids[i], "_EUR", EUR_ids[j])]] <- result
+    }
+  }
+}
+
+df_list <- list()
+
+# Iterate over the results_intra list
+for (comparison_name in names(results_intra)) {
+  comparison_results_intra <- results_intra[[comparison_name]]
+  
+  # Iterate over the chromosomes in each comparison result
+  for (chromosome_name in names(comparison_results_intra)) {
+    chromosome_result <- comparison_results_intra[[chromosome_name]]
+    
+    # Extract the TAD_Frame data frame and add the chromosome and comparison columns
+    df <- chromosome_result$TAD_Frame
+    df$Chromosome <- chromosome_name
+    df$Comparison <- comparison_name
+    
+    # Add the data frame to the list
+    df_list[[paste0(comparison_name, "_", chromosome_name)]] <- df
+  }
+}
+
+# Combine all the data frames into a single data frame
+final_df <- do.call(rbind, df_list)
+
+fwrite(final_df, "Final_intraancestry_differential_TAD_bounds.txt", sep="\t", quote=F, row.names=F, col.names=T)
+```
+
+#Now, examine results. Ideally, want to visualize some pairwise comparisons at differential TADs that overlap the consensus TADs called previously. Load in the consensus TADs from prior run first:
+```{r}
+setwd("<path>")
+AFR.cons <- fread("consensus_AFR_TADs.txt")
+EUR.cons <- fread("consensus_EUR_TADs.txt")
+diff.TADs <- fread("Final_differential_TAD_bounds.txt")
+intra.diff.TADs <- fread("Final_intraancestry_differential_TAD_bounds.txt")
+
+AFR.cons$boundID <- paste(AFR.cons$chromosome, AFR.cons$Coordinate, sep=":")
+EUR.cons$boundID <- paste(EUR.cons$chromosome, EUR.cons$Coordinate, sep=":")
+diff.TADs$boundID <- paste(diff.TADs$Chromosome, diff.TADs$Boundary, sep=":")
+intra.diff.TADs$boundID <- paste(intra.diff.TADs$Chromosome, intra.diff.TADs$Boundary, sep=":")
+
+sum(AFR.cons$boundID %in% EUR.cons$boundID)
+sum(EUR.cons$boundID %in% AFR.cons$boundID)
+
+sum(EUR.cons$boundID %in% diff.TADs$boundID)
+sum(AFR.cons$boundID %in% diff.TADs$boundID)
+
+sum(diff.TADs$boundID %in% intra.diff.TADs$boundID)
+sum(intra.diff.TADs$boundID %in% diff.TADs$boundID)
+
+sum(diff.TADs$boundID %in% AFR.cons$boundID | diff.TADs$boundID %in% EUR.cons$boundID)
+signif.TADs <- diff.TADs[which(diff.TADs$boundID %in% AFR.cons$boundID | diff.TADs$boundID %in% EUR.cons$boundID),]
+
+#Take a look at TAD boundaries across comparisons
+ggplot(filter(diff.TADs, Type!=""), aes(x="Type", fill=Type)) + geom_bar() + facet_wrap(~Comparison) + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons")
+
+#Generate a single barchart for Brandon's CMD presentation October 2024:
+diff.TADs$Type <- factor(diff.TADs$Type, levels=c("Split", "Complex", "Merge", "Strength Change", "Shifted", "Non-Differential"))
+ggplot(filter(diff.TADs, Type!="", Comparison=="AFRSAMPLE_09_EURSAMPLE_16"), aes(x="Type", fill=Type)) + geom_bar() + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons") + scale_fill_manual(values=c("Split"="#00BFC4", "Complex"="#F8766D", "Merge"="#B79F00", "Strength Change"="#F564E3", "Shifted"="#619CFF", "Non-Differential"="#00BA38"))
+
+
+ggplot(filter(diff.TADs, Type!="Non-Differential"&Type!=""), aes(x="Type", fill=Type)) + geom_bar() + facet_wrap(~Comparison) + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons")
+
+ggplot(filter(intra.diff.TADs, Type!=""), aes(x="Type", fill=Type)) + geom_bar() + facet_wrap(~Comparison) + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons")
+
+ggplot(filter(intra.diff.TADs, Type!="Non-Differential"&Type!=""), aes(x="Type", fill=Type)) + geom_bar() + facet_wrap(~Comparison) + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons")
+
+#Get numbers for these comparisons
+table(intra.diff.TADs[grep("EUR", intra.diff.TADs$Comparison),]$Type)
+table(intra.diff.TADs[grep("AFR", intra.diff.TADs$Comparison),]$Type)
+table(diff.TADs$Type)
+
+table(diff.TADs[-grep("SAMPLE_09|SAMPLE_10|SAMPLE_11|SAMPLE_16|SAMPLE_17|SAMPLE_18|SAMPLE_05", diff.TADs$Comparison),]$Type) #AFRm vs EURm; remove females for this
+table(diff.TADs[-grep("SAMPLE_12|SAMPLE_13|SAMPLE_14|SAMPLE_15|SAMPLE_19|SAMPLE_20|SAMPLE_21|SAMPLE_22", diff.TADs$Comparison),]$Type) #AFRf vs EURf; remove males for this
+
+#Look across sexes within ancestries.
+allcomps <- unique(intra.diff.TADs$Comparison)
+AFRmAFRf <- paste(allcomps[c(4:6,8:10,13:15,19:21)], collapse="|")
+AFRfs <- paste(allcomps[c(1:3)], collapse="|")
+AFRms <- paste(allcomps[c(7,11,12,16,17)], collapse="|")
+table(intra.diff.TADs[grep(AFRmAFRf, intra.diff.TADs$Comparison),]$Type) #AFRm vs AFRf, have to remove any AFRm-AFRm and AFRf-AFRf comparisons for this
+table(intra.diff.TADs[grep(AFRfs, intra.diff.TADs$Comparison),]$Type) #AFRfs
+table(intra.diff.TADs[grep(AFRms, intra.diff.TADs$Comparison),]$Type) #AFRms
+
+EURmEURf <- paste(allcomps[c(25:27,29:31,34:36,40:46)], collapse="|")
+EURfs <- paste(allcomps[c(22:24,47:49)], collapse="|")
+EURms <- paste(allcomps[c(28,32:33,37:39)], collapse="|")
+
+table(intra.diff.TADs[grep(EURmEURf, intra.diff.TADs$Comparison),]$Type) #EURm vs EURf, have to remove any EURm-EURm and EURf-EURf comparisons for this
+table(intra.diff.TADs[grep(EURfs, intra.diff.TADs$Comparison),]$Type) #EURfs
+table(intra.diff.TADs[grep(EURms, intra.diff.TADs$Comparison),]$Type) #EURms
+
+#Gap score is the differential boundary score, subset to boundaries with strong change and see which pop up most:
+sort(table(diff.TADs[which(abs(diff.TADs$Gap_Score)>=15),]$boundID), decreasing=T)
+
+#Several potentially compelling candidates emerge: chr6:5.9e+07, chr2:92750000, chr2:93100000 are the strongest, off the cuff.
+diff.TADs[which(diff.TADs$boundID=="chr6:5.9e+07"),]
+diff.TADs[which(diff.TADs$boundID=="chr2:92750000"),]
+diff.TADs[which(diff.TADs$boundID=="chr2:93100000"),]
+
+#Next level down of potential candidates, with 9 hits from above filtering, includes: chr2:9.3e+07, chr2:92900000, chr3:92750000, chr4:5.1e+07, chr5:49450000. These all have 9 hits, then goes down to 8.
+
+
+
+#Look only at the consensus TAD boundaries:
+#Take a look at TAD boundaries across comparisons
+ggplot(filter(diff.TADs, Type!="", boundID %in% EUR.cons$boundID|boundID %in% AFR.cons$boundID), aes(x="Type", fill=Type)) + geom_bar() + facet_wrap(~Comparison) + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons")
+
+ggplot(filter(diff.TADs, Type!="Non-Differential"&Type!="", boundID %in% EUR.cons$boundID|boundID %in% AFR.cons$boundID), aes(x="Type", fill=Type)) + geom_bar() + facet_wrap(~Comparison) + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons")
+
+ggplot(filter(diff.TADs, Type!="Non-Differential"&Type!="", boundID %in% EUR.cons$boundID&boundID %nin% AFR.cons$boundID), aes(x="Type", fill=Type)) + geom_bar() + facet_wrap(~Comparison) + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons")
+
+ggplot(filter(diff.TADs, Type!="Non-Differential"&Type!="", boundID %nin% EUR.cons$boundID&boundID %in% AFR.cons$boundID), aes(x="Type", fill=Type)) + geom_bar() + facet_wrap(~Comparison) + theme(axis.text.x=element_text(angle=90, hjust=1)) + labs(y="Boundary Count", fill="Type") + ggtitle("TAD Boundary Comparisons")
+```
+
+### Tissue based differential TADs
+```{r}
+#Below code was from the ancestry example, now, we want to compare across tissues as follows:
+#Endo: SAMPLE_02 and SAMPLE_06
+#Fibro: SAMPLE_03 and SAMPLE_07
+#Macro: SAMPLE_04 and SAMPLE_08
+#CA: SAMPLE_01 and SAMPLE_05
+
+
+# Required library
+library(HiCcompare)
+library(dplyr)
+library(data.table)
+library(HiCcompare)
+library(multiHiCcompare)
+library(SpectralTAD)
+library(TADCompare)
+library(BiocParallel)
+library(ggplot2)
+library(Hmisc)
+numCores <- 96
+register(MulticoreParam(workers=numCores), default=TRUE)
+data("hg38_cyto")
+
+# Function to read and format data
+read_format_data <- function(id) {
+  path <- paste0("<path>/FULL_SAMPLES/", id, "/raw/", id)
+  res <- "50000"
+  bed <- read.table(paste0(path, ".", res, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path, ".", res, ".matrix"))
+  dat <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat <- dat$cis
+  dat <- dat[-grep("Un|alt|random|X|Y|M", names(dat), perl=TRUE)]
+  return(dat)
+}
+
+# Function to make pairwise comparisons
+compare_pairwise <- function(dat1, dat2) {
+  sparse_tads = lapply(1:length(dat1), function(z) {
+    x <- dat1[[z]]
+    y <- dat2[[z]]
+    chr <- x[, 1][1]  # Pull out chromosome
+    x <- x[, c(2, 5, 7)]  # Subset to make three column matrix
+    y <- y[, c(2, 5, 7)]
+    comp <- TADCompare(x, y, resolution = 50000)
+    return(list("comp" = comp, "chr" = chr))
+  })
+  diff_res <- lapply(sparse_tads, function(x) x[["comp"]])
+  chr <- lapply(sparse_tads, function(x) x[["chr"]])
+  names(diff_res) <- chr
+  return(diff_res)
+}
+
+# Sample IDs for each tissue type
+sample_ids <- list(
+  Endo = c("SAMPLE_02", "SAMPLE_06"),
+  Fibro = c("SAMPLE_03", "SAMPLE_07"),
+  Macro = c("SAMPLE_04", "SAMPLE_08"),
+  CA = c("SAMPLE_01", "SAMPLE_05")
+)
+
+# Load the data for each sample
+samples_data <- lapply(sample_ids, function(ids) {
+  sapply(ids, read_format_data, simplify = FALSE)
+})
+
+# Intra-tissue comparisons
+intra_tissue_results <- lapply(samples_data, function(tissue_samples) {
+  results <- list()
+  for (i in 1:(length(tissue_samples) - 1)) {
+    for (j in (i + 1):length(tissue_samples)) {
+      result <- compare_pairwise(tissue_samples[[i]], tissue_samples[[j]])
+      results[[paste0(names(tissue_samples)[i], "_vs_", names(tissue_samples)[j])]] <- result
+    }
+  }
+  return(results)
+})
+
+# Inter-tissue comparisons
+inter_tissue_results <- list()
+tissue_names <- names(samples_data)
+for (i in 1:(length(samples_data) - 1)) {
+  for (j in (i + 1):length(samples_data)) {
+    for (sample_i in samples_data[[i]]) {
+      for (sample_j in samples_data[[j]]) {
+        comparison_name <- paste0(names(sample_i), "_vs_", names(sample_j))
+        result <- compare_pairwise(sample_i, sample_j)
+        inter_tissue_results[[comparison_name]] <- result
+      }
+    }
+  }
+}
+
+# Inter-tissue comparisons
+inter_tissue_results <- list()
+tissue_names <- names(samples_data)
+
+# Adjusting loop to correctly handle sample data and naming
+for (i in 1:(length(samples_data) - 1)) {
+  for (j in (i + 1):length(samples_data)) {
+    tissue_i_names <- names(samples_data[[tissue_names[i]]])
+    tissue_j_names <- names(samples_data[[tissue_names[j]]])
+    
+    for (k in 1:length(tissue_i_names)) {
+      for (l in 1:length(tissue_j_names)) {
+        sample_i <- samples_data[[tissue_names[i]]][[tissue_i_names[k]]]
+        sample_j <- samples_data[[tissue_names[j]]][[tissue_j_names[l]]]
+        
+        comparison_name <- paste0(tissue_i_names[k], "_vs_", tissue_j_names[l])
+        
+        result <- compare_pairwise(sample_i, sample_j)
+        inter_tissue_results[[comparison_name]] <- result
+      }
+    }
+  }
+}
+
+
+# At this point, `intra_tissue_results` contains all the comparisons within each tissue type,
+# and `inter_tissue_results` contains comparisons across different tissue types.
+# You can further process these results as needed, for example, by extracting TAD differences
+# or visualizing the comparison outcomes.
+# Iterate over the results list
+df_list <- list()
+for (comparison_name in names(intra_tissue_results)) {
+  comparison_results <- intra_tissue_results[[comparison_name]]
+  
+  # Add the data frame to the list
+  df_list[[paste0(comparison_name, "_", chromosome_name)]] <- comparison_results
+}
+
+
+# Combine all the data frames into a single data frame
+intra_df <- do.call(rbind, df_list)
+fwrite(intra_df, "Intra-tissue_differential_TAD_bounds.txt", sep="\t", quote=F, row.names=F, col.names=T)
+
+
+df_list <- list()
+for (comparison_name in names(inter_tissue_results)) {
+  comparison_results <- inter_tissue_results[[comparison_name]]
+  
+  # Add the data frame to the list
+  df_list[[paste0(comparison_name, "_", chromosome_name)]] <- comparison_results
+}
+
+inter_df <- do.call(rbind, df_list)
+fwrite(inter_df, "Inter-tissue_differential_TAD_bounds.txt", sep="\t", quote=F, row.names=F, col.names=T)
+```
+
+#Old, scratch from chat w/ GitHub CoPilot
+```{r}
+# Extract the sample number IDs from the paths
+AFR_ids <- basename(AFR_paths)
+EUR_ids <- basename(EUR_paths)
+
+# Get the current names in results
+names <- names(results)
+
+# Split the names at the underscore
+split_names <- strsplit(names, "_")
+
+# Replace the indices with the sample number IDs
+new_names <- mapply(function(name, afr, eur) {
+  parts <- strsplit(name, "_")[[1]]
+  parts[c(2, 4)] <- c(afr, eur)
+  paste(parts, collapse = "_")
+}, names, rep(AFR_ids, each=length(EUR_ids)), rep(EUR_ids, times=length(AFR_ids)))
+
+names(results) <- new_names
+
+saveRDS(results, "TADCompare_results.rds")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Get the list of all AFR and EUR samples
+AFR_samples <- list(SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, SSAMPLE_12, SSAMPLE_13, SSAMPLE_14, SSAMPLE_15)
+EUR_samples <- list(SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, SSAMPLE_19, SSAMPLE_20, SSAMPLE_21, SSAMPLE_22, SSAMPLE_05)
+
+# Initialize an empty list to store the results
+results <- list()
+
+test <- TADCompare(SSAMPLE_09[[22]][1], SSAMPLE_16[[22]][1], resolution=50000)
+
+
+TAD_comparer <- function(path1, path2, res){
+  bed <- read.table(paste0(path1, ".", res, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path1, ".", res, ".matrix"))
+  dat1 <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat1 <- dat1$cis
+  dat1 <- dat1[-grep("Un|alt|random|X|Y|M", names(dat1), perl=T)]
+  
+  bed <- read.table(paste0(path2, ".", res, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path2, ".", res, ".matrix"))
+  dat2 <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat2 <- dat2$cis
+  dat2 <- dat2[-grep("Un|alt|random|X|Y|M", names(dat2), perl=T)]
+  
+  sparse_tads = lapply(1:length(dat1), function(z) {
+    x <- dat1[[z]]
+    y <- dat2[[z]]
+    
+    #Pull out chromosome
+    chr <- x[, 1][1]
+    #Subset to make three column matrix
+    x <- x[, c(2, 5, 7)]
+    y <- y[, c(2, 5, 7)]
+
+    #Run SpectralTAD
+    comp <- TADCompare(x, y, resolution = 50000)
+
+    return(list("comp"=comp, "chr"=chr))
+  })
+  diff_res <- lapply(sparse_tads, function(x) x[["comp"]])
+  chr <- lapply(sparse_tads, function(x) x[["chr"]])
+  names(diff_res) <- chr
+  return(diff_res)
+}
+
+test <- TAD_comparer("<path>/FULL_SAMPLES/SAMPLE_09/raw/SAMPLE_09", "<path>/FULL_SAMPLES/SAMPLE_16/raw/SAMPLE_16", 50000)
+
+
+
+
+# Function to read and format data
+read_format_data <- function(path, res) {
+  bed <- read.table(paste0(path, ".", res, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path, ".", res, ".matrix"))
+  dat <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat <- dat$cis
+  dat <- dat[-grep("Un|alt|random|X|Y|M", names(dat), perl=T)]
+  return(dat)
+}
+
+# Function to make pairwise comparisons
+compare_pairwise <- function(dat1, dat2) {
+  sparse_tads = lapply(1:length(dat1), function(z) {
+    x <- dat1[[z]]
+    y <- dat2[[z]]
+    
+    # Pull out chromosome
+    chr <- x[, 1][1]
+    # Subset to make three column matrix
+    x <- x[, c(2, 5, 7)]
+    y <- y[, c(2, 5, 7)]
+    
+    # Run SpectralTAD
+    comp <- TADCompare(x, y, resolution = 50000)
+    return(list("comp" = comp, "chr" = chr))
+  })
+  
+  diff_res <- lapply(sparse_tads, function(x) x[["comp"]])
+  chr <- lapply(sparse_tads, function(x) x[["chr"]])
+  names(diff_res) <- chr
+  return(diff_res)
+}
+
+
+
+
+
+
+# Loop over all AFR and EUR samples
+for (i in seq_along(AFR_samples)) {
+  for (j in seq_along(EUR_samples)) {
+    pair_results <- lapply(1:22, function(k) {
+      cat("i:", i, "j:", j, "k:", k, "\n")
+      print(head(AFR_samples[[i]][[k]][1]))
+      #cat("AFR_samples[[i]][[k]][1]:", AFR_samples[[i]][[k]][1], "\n")
+      #cat("EUR_samples[[j]][[k]][1]:", EUR_samples[[j]][[k]][1], "\n")
+      result <- TADCompare(AFR_samples[[i]][[k]][1], EUR_samples[[j]][[k]][1], resolution=50000)
+      result$chromosome <- paste0("chr", k)
+      result$pair <- paste0("AFR", i, "_EUR", j)
+      result
+    })
+    results[[paste0("AFR", i, "_EUR", j)]] <- do.call(rbind, pair_results)
+  }
+}
+
+# Combine all results into a single data frame
+df <- do.call(rbind, results)
+
+# Write the data frame to a file
+fwrite(df, "TADCompare_results.txt", sep="\t", quote=F, row.names=F, col.names=T)
+```
+
+## Differential Loop Call Functions
+```{r}
+#HiCCompare functions
+dat_reader <- function(path, res) {
+  bed <- read.table(paste0(path, "sample_", res, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path, "sample_", res, ".matrix"))
+  dat <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat <- dat$cis
+  dat <- dat[-grep("Un|alt|random|X|Y|M", names(dat), perl=T)]
+  return(dat)
+}
+
+dat_normalizer <- function(dat1, dat2){
+  hic.list <- mapply(create.hic.table, dat1, dat2, SIMPLIFY=FALSE, scale=FALSE)
+  hic.list <- total_sum(hic.list)
+  hic.table <- hic_loess(hic.list, Plot=TRUE, parallel=TRUE)
+  return(hic.table)
+}
+
+dat_comparer <- function(hic_table, writepath, A_min=NA){
+  hic.table <- hic_compare(hic_table, A.min=A_min, Plot=TRUE, parallel=TRUE)
+  objout <- bind_rows(hic.table)
+  objout <- objout[order(objout$p.adj),]
+  objout <- objout[which(objout$p.adj<=0.05),]
+  fwrite(objout, writepath, sep="\t", row.names=F, col.names=T, quote=F)
+  return(hic.table)
+}
+
+dat_analyzer <- function(datapath1, datapath2, res, outpath){
+  dat1 <- dat_reader(paste0(datapath1, "/", res, "/"), res)
+  dat2 <- dat_reader(paste0(datapath2, "/", res, "/"), res)
+  dat1v2 <- dat_normalizer(dat1, dat2)
+  dat_res <- dat_comparer(dat1v2, paste0(outpath, "_", res, ".txt"))
+  return(dat_res)
+}
+```
+
+## Differential loop calls, 5kb!
+```{r}
+options(scipen=999)
+dat_analyzer("<path>/FULL_SAMPLES/merged_data_black_men/hic_results/matrix/sample/raw", "<path>/FULL_SAMPLES/merged_data_black_women/hic_results/matrix/sample/raw", 5000, "<path>/FULL_SAMPLES/merged_bm_vs_bw")
+
+dat_analyzer("<path>/FULL_SAMPLES/merged_data_white_men/hic_results/matrix/sample/raw", "<path>/FULL_SAMPLES/merged_data_white_women/hic_results/matrix/sample/raw", 5000, "<path>/FULL_SAMPLES/merged_wm_vs_ww")
+
+dat_analyzer("<path>/FULL_SAMPLES/merged_data_black_men/hic_results/matrix/sample/raw", "<path>/FULL_SAMPLES/merged_data_white_men/hic_results/matrix/sample/raw", 5000, "<path>/FULL_SAMPLES/merged_bm_vs_wm")
+
+dat_analyzer("<path>/FULL_SAMPLES/merged_data_black_women/hic_results/matrix/sample/raw", "<path>/FULL_SAMPLES/merged_data_white_women/hic_results/matrix/sample/raw", 5000, "<path>/FULL_SAMPLES/merged_bw_vs_ww")
+
+dat_analyzer("<path>/FULL_SAMPLES/merged_data_men/hic_results/matrix/sample/raw", "<path>/FULL_SAMPLES/merged_data_women/hic_results/matrix/sample/raw", 5000, "<path>/FULL_SAMPLES/merged_m_vs_w")
+
+dat_analyzer("<path>/FULL_SAMPLES/merged_data_white/hic_results/matrix/sample/raw", "<path>/FULL_SAMPLES/merged_data_black/hic_results/matrix/sample/raw", 5000, "<path>/FULL_SAMPLES/merged_w_vs_b")
+```
+
+## Multi Hi-C Compare, looking at individual-level data instead (may be more reliable!)
+```{r}
+
+#MultiHiCCompare functions
+dat_reader_mult <- function(path, res) {
+  bed <- read.table(paste0(path, ".", res, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path, ".", res, ".matrix"))
+  dat <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat <- dat$cis
+  dat <- dat[-grep("Un|alt|random|X|Y|M", names(dat), perl=T)]
+  final <- bind_rows(dat) %>% select(., chr1, start1, start2, IF)
+  colnames(final) <- c("chr", "region1", "region2", "IF")
+  return(final)
+}
+
+dat_normalizer_mult <- function(dat1, dat2, groups){
+  hicexp <- make_hicexp(dat1, dat2, groups=groups, remove.regions=hg38_cyto)
+  hicexp <- cyclic_loess(hicexp, verbose=FALSE, parallel=TRUE)
+  print(MD_hicexp(hicexp))
+}
+
+dat_reader_mult_chr <- function(path, res, chr) {
+  bed <- read.table(paste0(path, ".", res, "_", chr, "_abs.bed"))
+  bed[,1] <- paste0("chr", bed[,1])
+  mat <- read.table(paste0(path, ".", res, "_", chr, ".matrix"))
+  dat <- HiCcompare::hicpro2bedpe(mat, bed)
+  dat <- dat$cis
+  final <- bind_rows(dat) %>% select(., chr1, start1, start2, IF)
+  colnames(final) <- c("chr", "region1", "region2", "IF")
+  
+  na_inf_indices <- which(is.na(final$IF) | final$IF== Inf)
+  print(length(na_inf_indices))
+  
+  return(final)
+}
+```
+
+### MultiHiCCompare testing
+```{r}
+options(scipen=999)
+
+#Troubleshooting:
+SSAMPLE_16 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_16/raw/SAMPLE_16", 5000, "X")
+SSAMPLE_17 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_17/raw/SAMPLE_17", 5000, "X")
+SSAMPLE_18 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_18/raw/SAMPLE_18", 5000, "X")
+SSAMPLE_19 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_19/raw/SAMPLE_19", 5000, "X")
+SSAMPLE_20 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_20/raw/SAMPLE_20", 5000, "X")
+SSAMPLE_21 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_21/raw/SAMPLE_21", 5000, "X")
+SSAMPLE_22 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_22/raw/SAMPLE_22", 5000, "X")
+SSAMPLE_05 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_05/raw/SAMPLE_05", 5000, "X")
+
+SSAMPLE_09 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_09/raw/SAMPLE_09", 5000, "X")
+SSAMPLE_10 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_10/raw/SAMPLE_10", 5000, "X")
+SSAMPLE_11 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_11/raw/SAMPLE_11", 5000, "X")
+SSAMPLE_12 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_12/raw/SAMPLE_12", 5000, "X")
+SSAMPLE_13 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_13/raw/SAMPLE_13", 5000, "X")
+SSAMPLE_14 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_14/raw/SAMPLE_14", 5000, "X")
+SSAMPLE_15 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_15/raw/SAMPLE_15", 5000, "X")
+
+#ChrX for females
+myexp <- make_hicexp(SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, SSAMPLE_05, groups=c(0,0,0,1,1,1,1), remove.regions=hg38_cyto)
+myexp <- multiHiCcompare::fastlo(myexp, parallel=TRUE, verbose=TRUE)
+myexp <- hic_exactTest(myexp, p.method="fdr", parallel=TRUE)
+final <- results(myexp)
+final <- final[order(final$p.adj),]
+final[which(final$p.adj<=0.05),]
+
+#all_bins <- unique(rbind(SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, SSAMPLE_19, SSAMPLE_20, SSAMPLE_21, SSAMPLE_22, SSAMPLE_05, SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, SSAMPLE_12, SSAMPLE_13, SSAMPLE_14, SSAMPLE_15)[,c("chr", "region1", "region2")])
+
+# Define a function to add missing bins
+add_missing_bins <- function(dat) {
+  # Find the bins that are missing in this dataset
+  missing_bins <- setdiff(all_bins, dat[, c("chr", "region1", "region2")])
+
+  # Create a data frame with zero counts for the missing bins
+  missing_data <- data.frame(missing_bins, IF = 1E-10)
+
+  # Add the missing data to the dataset
+  dat <- rbind(dat, missing_data)
+
+  return(dat)
+}
+
+#SSAMPLE_16 <- add_missing_bins(SSAMPLE_16)
+#SSAMPLE_17 <- add_missing_bins(SSAMPLE_17)
+#SSAMPLE_18 <- add_missing_bins(SSAMPLE_18)
+#SSAMPLE_19 <- add_missing_bins(SSAMPLE_19)
+#SSAMPLE_20 <- add_missing_bins(SSAMPLE_20)
+#SSAMPLE_21 <- add_missing_bins(SSAMPLE_21)
+#SSAMPLE_22 <- add_missing_bins(SSAMPLE_22)
+#SSAMPLE_05 <- add_missing_bins(SSAMPLE_05)
+#SSAMPLE_09 <- add_missing_bins(SSAMPLE_09)
+#SSAMPLE_10 <- add_missing_bins(SSAMPLE_10)
+#SSAMPLE_11 <- add_missing_bins(SSAMPLE_11)
+#SSAMPLE_12 <- add_missing_bins(SSAMPLE_12)
+#SSAMPLE_13 <- add_missing_bins(SSAMPLE_13)
+#SSAMPLE_14 <- add_missing_bins(SSAMPLE_14)
+#SSAMPLE_15 <- add_missing_bins(SSAMPLE_15)
+
+myexp <- make_hicexp(SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, SSAMPLE_12, SSAMPLE_13, SSAMPLE_14, SSAMPLE_15, SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, SSAMPLE_19, SSAMPLE_20, SSAMPLE_21, SSAMPLE_22, SSAMPLE_05, groups=c(0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1), remove.regions=hg38_cyto)
+myexp <- multiHiCcompare::fastlo(myexp, parallel=TRUE, verbose=TRUE)
+myexp <- hic_exactTest(myexp, p.method="fdr", parallel=TRUE)
+
+#Get chr18 results at 1kb! AA vs. EUR!
+myexp2 <- make_hicexp(SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, SSAMPLE_12, SSAMPLE_13, SSAMPLE_15, SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, SSAMPLE_19, SSAMPLE_20, SSAMPLE_21, SSAMPLE_22, SSAMPLE_05, groups=c(0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1), remove.regions=hg38_cyto)
+myexp2 <- multiHiCcompare::fastlo(myexp2, parallel=TRUE, verbose=TRUE)
+myexp2 <- hic_exactTest(myexp2, p.method="fdr", parallel=TRUE)
+myexp2_res <- results(myexp2) %>% filter(., p.adj<=0.1)
+fwrite(myexp2_res, "AA_vs_EUR_1kb_chr18_result.txt", sep="\t", row.names=F, col.names=T, quote=F)
+
+#Get chr18 results at 1kb, M v W:
+myexp3 <- make_hicexp(SSAMPLE_12, SSAMPLE_13, SSAMPLE_15, SSAMPLE_19, SSAMPLE_20, SSAMPLE_21, SSAMPLE_22, SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, SSAMPLE_05, SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, groups=c(0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1), remove.regions=hg38_cyto)
+myexp3 <- multiHiCcompare::fastlo(myexp3, parallel=TRUE, verbose=TRUE)
+myexp3 <- hic_exactTest(myexp3, p.method="fdr", parallel=TRUE)
+myexp3_res <- results(myexp3) %>% filter(., p.adj<=0.1)
+fwrite(myexp3_res, "M_vs_W_1kb_chr18_result.txt", sep="\t", row.names=F, col.names=T, quote=F)
+
+#Repeat the above, for chr5, re-including the dropped sample:
+SSAMPLE_16 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_16/raw/SAMPLE_16/SAMPLE_16", 1000, 5)
+SSAMPLE_17 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_17/raw/SAMPLE_17/SAMPLE_17", 1000, 5)
+SSAMPLE_18 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_18/raw/SAMPLE_18/SAMPLE_18", 1000, 5)
+SSAMPLE_19 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_19/raw/SAMPLE_19/SAMPLE_19", 1000, 5)
+SSAMPLE_20 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_20/raw/SAMPLE_20/SAMPLE_20", 1000, 5)
+SSAMPLE_21 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_21/raw/SAMPLE_21/SAMPLE_21", 1000, 5)
+SSAMPLE_22 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_22/raw/SAMPLE_22/SAMPLE_22", 1000, 5)
+SSAMPLE_05 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_05/raw/SAMPLE_05/SAMPLE_05", 1000, 5)
+
+SSAMPLE_09 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_09/raw/SAMPLE_09/SAMPLE_09", 1000, 5)
+SSAMPLE_10 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_10/raw/SAMPLE_10/SAMPLE_10", 1000, 5)
+SSAMPLE_11 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_11/raw/SAMPLE_11/SAMPLE_11", 1000, 5)
+SSAMPLE_12 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_12/raw/SAMPLE_12/SAMPLE_12", 1000, 5)
+SSAMPLE_13 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_13/raw/SAMPLE_13/SAMPLE_13", 1000, 5)
+SSAMPLE_14 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_14/raw/SAMPLE_14/SAMPLE_14", 1000, 5)
+SSAMPLE_15 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_15/raw/SAMPLE_15/SAMPLE_15", 1000, 5)
+
+#Get chr5 results at 1kb, M v W:
+myexp4 <- make_hicexp(SSAMPLE_12, SSAMPLE_13, SSAMPLE_14, SSAMPLE_15, SSAMPLE_19, SSAMPLE_20, SSAMPLE_21, SSAMPLE_22, SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, SSAMPLE_05, SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, groups=c(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1), remove.regions=hg38_cyto)
+myexp4 <- multiHiCcompare::fastlo(myexp4, parallel=TRUE, verbose=TRUE)
+myexp4 <- hic_exactTest(myexp4, p.method="fdr", parallel=TRUE)
+myexp4_res <- results(myexp4) %>% filter(., p.adj<=0.1)
+fwrite(myexp4_res, "M_vs_W_1kb_chr5_result.txt", sep="\t", row.names=F, col.names=T, quote=F)
+
+#Walk through this step-by-step based on https://github.com/dozmorovlab/multiHiCcompare/blob/dcfe4aaa8eaef45e203f3d7f806232bb613d2c9b/R/glm.R#L34
+table_list <- split(hic_table(myexp), hic_table(myexp)$chr)
+table_list <- lapply(table_list, .get_dist_tables, max.pool=0.7)
+table_list <- do.call(c, table_list)
+dge_list <- lapply(table_list, .hictable2DGEList, covariates=meta(myexp))
+
+#Estimate dispersion, this is where I think things go awry:
+if ( length(meta(myexp)$group) == 2) { # IF no replicates use edgeR's recommended method to estimate dispersion
+    dge_list <- smartApply(parallel, dge_list, edgeR::estimateGLMCommonDisp,
+                                                          method="deviance", robust=TRUE, 
+                                                          subset=NULL)
+  } else { # If replicates for condition then use standard way for estimating dispersion
+    dge_list <- smartApply(parallel, dge_list, edgeR::estimateDisp, 
+                           design=model.matrix(~meta(hicexp)$group))
+
+  }
+
+inter_data <- multiHiCcompare::interactions(myexp)
+
+
+#Validate nf pipeline results:
+SSAMPLE_09 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_09/raw/SAMPLE_09/SAMPLE_09", 5000, 20)
+SSAMPLE_10 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_10/raw/SAMPLE_10/SAMPLE_10", 5000, 20)
+SSAMPLE_11 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_11/raw/SAMPLE_11/SAMPLE_11", 5000, 20)
+SSAMPLE_12 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_12/raw/SAMPLE_12/SAMPLE_12", 5000, 20)
+SSAMPLE_13 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_13/raw/SAMPLE_13/SAMPLE_13", 5000, 20)
+SSAMPLE_14 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_14/raw/SAMPLE_14/SAMPLE_14", 5000, 20)
+SSAMPLE_15 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_15/raw/SAMPLE_15", 5000, 20)
+
+SSAMPLE_16 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_16/raw/SAMPLE_16/SAMPLE_16", 5000, 20)
+SSAMPLE_17 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_17/raw/SAMPLE_17/SAMPLE_17", 5000, 20)
+SSAMPLE_18 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_18/raw/SAMPLE_18/SAMPLE_18", 5000, 20)
+SSAMPLE_19 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_19/raw/SAMPLE_19/SAMPLE_19", 5000, 20)
+SSAMPLE_20 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_20/raw/SAMPLE_20/SAMPLE_20", 5000, 20)
+SSAMPLE_21 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_21/raw/SAMPLE_21/SAMPLE_21", 5000, 20)
+SSAMPLE_22 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_22/raw/SAMPLE_22/SAMPLE_22", 5000, 20)
+SSAMPLE_05 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_05/raw/SAMPLE_05/SAMPLE_05", 5000, 20)
+
+test <- make_hicexp(SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, SSAMPLE_12, SSAMPLE_13, SSAMPLE_14, SSAMPLE_15, SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, SSAMPLE_19, SSAMPLE_20, SSAMPLE_21, SSAMPLE_22, SSAMPLE_05, groups=c(0,0,0,0,0,0,0,1,1,1,1,1,1,1,1), remove.regions=hg38_cyto)
+test <- fastlo(test, parallel=TRUE, verbose=TRUE)
+test <- hic_exactTest(test, p.method="fdr", parallel = TRUE)
+final <- results(test)
+final <- filter(final, p.adj<=0.1)
+print(final)
+
+
+
+finalall <- NULL
+for(CHR in c(1:22)) {
+  SSAMPLE_19 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_19/raw/SAMPLE_19", 5000, CHR)
+  SSAMPLE_20 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_20/raw/SAMPLE_20", 5000, CHR)
+  SSAMPLE_12 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_12/raw/SAMPLE_12", 5000, CHR)
+  SSAMPLE_13 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_13/raw/SAMPLE_13", 5000, CHR)
+  
+  myexp <- make_hicexp(SSAMPLE_19, SSAMPLE_20, SSAMPLE_12, SSAMPLE_13, groups=c(0, 0, 1, 1), remove.regions=hg38_cyto)
+  myexp <- fastlo(myexp, parallel=TRUE, verbose=TRUE)
+  print(MD_hicexp(myexp))
+  myexp <- hic_exactTest(myexp, p.method="fdr", parallel=TRUE)
+  final <- results(myexp)
+  final <- filter(final, p.adj<=0.05)
+  finalall <- rbind(finalall, final)
+}
+
+SSAMPLE_09
+SSAMPLE_19.5000.22 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_19/raw/SAMPLE_19", 5000, 22)
+SSAMPLE_20.5000.22 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_20/raw/SAMPLE_20", 5000, 22)
+SSAMPLE_12.5000.22 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_12/raw/SAMPLE_12", 5000, 22)
+SSAMPLE_13.5000.22 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_13/raw/SAMPLE_13", 5000, 22)
+
+myexp <- make_hicexp(SSAMPLE_19.5000.22, SSAMPLE_20.5000.22, SSAMPLE_12.5000.22, SSAMPLE_13.5000.22, groups=c(0, 0, 1, 1), remove.regions=hg38_cyto)
+myexp <- fastlo(myexp, parallel=TRUE, verbose=TRUE)
+MD_hicexp(myexp)
+myexp <- hic_exactTest(myexp, p.method="fdr", parallel=TRUE)
+final <- results(myexp)
+final <- filter(final, p.adj<=0.05)
+
+allres <- NULL
+allres <- rbind(allres, final)
+
+SSAMPLE_19.5000.18 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_19/raw/SAMPLE_19", 5000, 18)
+SSAMPLE_20.5000.18 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_20/raw/SAMPLE_20", 5000, 18)
+SSAMPLE_12.5000.18 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_12/raw/SAMPLE_12", 5000, 18)
+SSAMPLE_13.5000.18 <- dat_reader_mult_chr("<path>/FULL_SAMPLES/SAMPLE_13/raw/SAMPLE_13", 5000, 18)
+
+myexp <- make_hicexp(SSAMPLE_19.5000.18, SSAMPLE_20.5000.18, SSAMPLE_12.5000.18, SSAMPLE_13.5000.18, groups=c(0, 0, 1, 1), remove.regions=hg38_cyto)
+myexp <- fastlo(myexp, parallel=TRUE, verbose=TRUE)
+MD_hicexp(myexp)
+myexp <- hic_exactTest(myexp, p.method="fdr", parallel=TRUE)
+final18 <- results(myexp)
+final18 <- filter(final18, p.adj<=0.05)
+
+allres <- rbind(allres, final18)
+
+#Caucasian females
+SSAMPLE_05 <- dat_reader_mult("<path>/FULL_SAMPLES/SAMPLE_05/raw/SAMPLE_05", 500000)
+SSAMPLE_16 <- dat_reader_mult("<path>/FULL_SAMPLES/SAMPLE_16/raw/SAMPLE_16", 500000)
+SSAMPLE_17 <- dat_reader_mult("<path>/FULL_SAMPLES/SAMPLE_17/raw/SAMPLE_17", 500000)
+SSAMPLE_18 <- dat_reader_mult("<path>/FULL_SAMPLES/SAMPLE_18/raw/SAMPLE_18", 500000)
+
+#AA females
+SSAMPLE_09 <- dat_reader_mult("<path>/FULL_SAMPLES/SAMPLE_09/raw/SAMPLE_09", 500000)
+SSAMPLE_10 <- dat_reader_mult("<path>/FULL_SAMPLES/SAMPLE_10/raw/SAMPLE_10", 500000)
+SSAMPLE_11 <- dat_reader_mult("<path>/FULL_SAMPLES/SAMPLE_11/raw/SAMPLE_11", 500000)
+
+mygroups="0, 0, 0, 0, 1, 1, 1"
+mg <- as.numeric(strsplit(mygroups, split=", ", fixed=TRUE)[[1]])
+
+hicexp_test <- make_hicexp(SSAMPLE_05, SSAMPLE_16, SSAMPLE_17, SSAMPLE_18, SSAMPLE_09, SSAMPLE_10, SSAMPLE_11, groups=mg, remove.regions=hg38_cyto)
+hicexp_test <- fastlo(hicexp_test, parallel=TRUE)
+MD_hicexp(hicexp_test)
+
+hicexp_test <- hic_exactTest(hicexp_test, p.method = 'fdr', parallel = TRUE)
+
+# plot results
+MD_composite(hicexp_test)
+results(hicexp_test)
+```

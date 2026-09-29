@@ -1,0 +1,2 @@
+# Top 100 fibromyocyte (modulated SMC) marker genes, Wirka et al. 2019 Nat Med 25:1280.
+# TODO: paste the exact ranked list used in the paper (one gene per line).

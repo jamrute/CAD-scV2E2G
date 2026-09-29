@@ -1,0 +1,14 @@
+name	sequence	purpose
+pos_rs2493274_F3	CCAAGCACCCACCATTCTG	positive allelic control
+pos_rs2493274_R3	ATCTGGGAATGCTGGCAGT	positive allelic control
+pos_rs56140443_F2	TGTCCTCCCTTATCCAGCTT	positive allelic control
+rs56140443	TAATTGCTGTGTGGGTGAGC	positive allelic control (reverse; name as in Methods)
+pos_rs78444094_F3	CCCACATCCATCTCCTTTGC	positive allelic control
+pos_rs78444094_R3	AATGAAGGTGGAGGTGCTGA	positive allelic control
+neg_CTCF+rs9850507_F3	GGGAATCAAGCTGTGTTTGC	negative allelic control
+neg_CTCF+rs9850507_R3	CAGGGCAGAGAAGTTGTTGG	negative allelic control
+neg_CTCF+rs6825404_F1	ACATTACTTGGGCAGGTGGA	negative allelic control
+neg_CTCF+rs6825404_R1	CCCCTAAACATCCTCGTTGAT	negative allelic control
+neg_CTCF+rs566243_F3	TGGGACCGGATAGTTCTTTGT	negative allelic control
+neg_CTCF+rs566243_R3	GACTAGGTAGAGGCAGGGGT	negative allelic control
+rs4887091_TaqMan_context	GGCCGACCTGGCCCCTCCCACACTGCTGGGCCTTGCATGGTCCTGCAGCGCC[T/C]CCTTGTGAGCGGCTCGCGGTACGGTCTCCCCTGCAGCTTGCTTTAGAAAGCGG	TaqMan genotyping (Thermo AN7EEGX)

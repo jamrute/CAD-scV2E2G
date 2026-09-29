@@ -1,0 +1,445 @@
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(SeuratDisk)
+library(sctransform)
+library(ggplot2)
+library(harmony)
+library(ArchR)
+library(ggsci)
+```
+```{r}
+smc_fibroblast_mapped <- readRDS("/Users/jamrute/Library/CloudStorage/Box-Box/Macbook_Files/Grad_School/Primary_Projects/Atherosclerosis/Projects/Multiomics/Multiome/analysis/RNA/globalObjectConstruction/cell_types/smc_fibro/smc_fibroblast_mapped.rds")
+```
+
+```{r}
+Idents(smc_fibroblast_mapped) <- "predicted.celltype"
+SMC <- subset(smc_fibroblast_mapped, idents = c("SMC1","SMC2","SMC3","CMC","FMC"))
+```
+
+```{r}
+SMC <- NormalizeData(SMC)
+SMC <- ScaleData(SMC)
+```
+
+```{r}
+# Save the normalized SCT matrix
+write.csv(as.matrix(SMC[["SCT"]]@scale.data), 
+          file = "./palantir/smc_RNA_normalized.txt", quote = FALSE)
+
+# Save the meta data
+write.csv(SMC@meta.data, file = "./palantir/smc_meta.csv", quote = TRUE)
+```
+
+```{r}
+SMC <- RunUMAP(SMC, reduction = "ref.pca", dims = 1:50, assay = "SCT")
+```
+
+```{r}
+SMC$predicted.celltype <- factor(SMC$predicted.celltype, levels = c("SMC1","SMC2","SMC3","FMC","CMC"))
+```
+
+```{r}
+citeseq <- readRDS("/Users/jamrute/Library/CloudStorage/Box-Box/Macbook_Files/Grad_School/Primary_Projects/Atherosclerosis/Projects/CITEseq_Atlas/analysis/final_analysis/cell_types/smc_fib/smc_fib_annotated.rds")
+```
+
+```{r}
+Idents(citeseq) <- "cell.state"
+citeseq_SMC <- subset(citeseq, idents = c("SMC1","SMC2","SMC3","CMC","FMC"))
+```
+
+```{r}
+FMC_geneSet <- read.table("./fibromyocyte_marker_genes.txt", header = FALSE, fill=TRUE)
+```
+
+```{r}
+DefaultAssay(SMC) <- "RNA"
+SMC <- AddModuleScore(
+	  object = SMC,
+	  features = list(FMC_geneSet$V1),
+	  name = 'fibromyocyte_marker'
+)
+```
+
+```{r}
+pdf("./FMC_DotPlot_Multiome.pdf", useDingbats = FALSE, width=5, height=5)
+DotPlot(SMC, features = "fibromyocyte_marker1", group.by = "predicted.celltype")
+dev.off()
+```
+
+```{r}
+DefaultAssay(citeseq_SMC) <- "RNA"
+citeseq_SMC <- AddModuleScore(
+	  object = citeseq_SMC,
+	  features = list(FMC_geneSet$V1),
+	  name = 'fibromyocyte_marker'
+)
+```
+
+```{r}
+pdf("./FMC_DotPlot_CITEseq.pdf", useDingbats = FALSE, width=5, height=5)
+DotPlot(citeseq_SMC, features = "fibromyocyte_marker1", group.by = "cell.state")
+dev.off()
+```
+
+
+
+```{r} 
+library(viridis)
+SMC@assays[["prediction.score.celltype"]]@counts <- SMC@assays[["prediction.score.celltype"]]@data
+#breaksList = seq(0, 1, by = 1/240)
+DefaultAssay(SMC) <- "prediction.score.celltype"
+Idents(SMC) <- "predicted.celltype"
+sample.averageexpression <- AverageExpression(SMC,  features = rownames(SMC@assays[["prediction.score.celltype"]]), assays = "prediction.score.celltype", group.by = "predicted.celltype", slot = "counts")
+sample.averageexpression <- as.matrix(sample.averageexpression)[[1]]
+
+sample.averageexpression <- sample.averageexpression[c("SMC1","SMC2","SMC3","FMC","CMC"),]
+sample.averageexpression <- sample.averageexpression[,c("SMC1","SMC2","SMC3","FMC","CMC")]
+
+pheatmap(sample.averageexpression, scale="none", col=viridis(240), cexCol=0.5, cellwidth=10, cluster_rows=FALSE, fontsize_row=6, fontsize_col=6, cluster_cols = FALSE, legend = TRUE, border_color = NA, cellheight=10)
+```
+
+```{r}
+pdf("./SCM_states_Multiome-CITEseq_mapping_heatmap.pdf", useDingbats = FALSE, width=4, height=4)
+pheatmap(sample.averageexpression, scale="none", col=viridis(240), cexCol=0.5, cellwidth=10, cluster_rows=FALSE, fontsize_row=6, fontsize_col=6, cluster_cols = FALSE, legend = TRUE, border_color = NA, cellheight=10)
+dev.off()
+```
+
+# FMC in space
+```{r}
+visium_FFPE <- readRDS("/Users/jamrute/Library/CloudStorage/Box-Box/Macbook_Files/Grad_School/Primary_Projects/Atherosclerosis/Projects/CITEseq_Atlas/Spatial/Visium_FFPE/analysis/seurat/integrated.rds")
+```
+
+```{r}
+DefaultAssay(visium_FFPE) <- "SCT"
+visium_FFPE <- AddModuleScore(visium_FFPE, features = list(FMC_geneSet$V1), assay="SCT", name = "fibromyocyte_marker")
+```
+
+```{r}
+g <- "fibromyocyte_marker1"
+SpatialFeaturePlot(object=visium_FFPE, features = g, images = "Visium_T1170_LAD") + scale_fill_gradientn(colors=viridis(256), oob=scales::squish, limits=c(0,0.8))
+SpatialFeaturePlot(object=visium_FFPE, features = g, images = "Visium_T1186_RCA") + scale_fill_gradientn(colors=viridis(256), oob=scales::squish, limits=c(0,0.8))
+SpatialFeaturePlot(object=visium_FFPE, features = g, images = "Visium_T1071") + scale_fill_gradientn(colors=viridis(256), oob=scales::squish, limits=c(0,0.8))
+SpatialFeaturePlot(object=visium_FFPE, features = g, images = "Visium_T1077") + scale_fill_gradientn(colors=viridis(256), oob=scales::squish, limits=c(0,0.8))
+```
+
+```{r}
+xenium <- readRDS("/Users/jamrute/Library/CloudStorage/Box-Box/Macbook_Files/Grad_School/Primary_Projects/Atherosclerosis/Projects/CITEseq_Atlas/Spatial/Coronary_Xenium/analysis_amrute/xenium.stroma.rds")
+```
+
+```{r}
+DefaultAssay(xenium) <- "SCT"
+xenium <- AddModuleScore(
+	  object = xenium,
+	  features = list(FMC_geneSet$V1),
+	  name = 'fibromyocyte_marker'
+)
+```
+
+```{r}
+pdf("dotplot_xenium_disease_severity.pdf", useDingbats = FALSE, width=4, height=3.5)
+DotPlot(xenium, features = c("fibromyocyte_marker1"), group.by = "disease") + RotatedAxis()
+dev.off()
+```
+
+
+## Carotid
+```{r}
+# 1) Remove broken basilisk cache
+unlink("~/Library/Caches/org.R-project.R/R/basilisk", recursive = TRUE)
+
+# 2) Restart R session completely (important)
+
+# 3) Reinstall fresh
+if (!requireNamespace("BiocManager", quietly=TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install(c("zellkonverter", "basilisk"), update=TRUE, ask=FALSE)
+```
+
+
+```{r}
+library(zellkonverter)
+library(Seurat)
+
+sce <- readH5AD("./0.5281_zenodo.17520898/scRNA_final_dataset/GRCh38-p14-Gencode_v44_with_intron_final_data.h5ad")
+```
+
+```{r}
+carotid <- as.Seurat(sce, counts = "X", data = NULL)
+```
+
+```{r}
+Idents(carotid) <- "final_low_level_celltype"
+carotid_SMC <- subset(carotid, idents = c("VSMC_fb-like", "VSMC_modul", "VSMC_contr"))
+```
+
+```{r}
+carotid_SMC <- NormalizeData(carotid_SMC)
+```
+
+```{r}
+FMC_geneSet <- read.table("./0.5281_zenodo.17520898/scRNA_final_dataset/fibromyocyte_marker_genes.txt", header = FALSE, fill=TRUE)
+```
+
+```{r}
+DefaultAssay(carotid_SMC) <- "originalexp"
+carotid_SMC <- AddModuleScore(
+	  object = carotid_SMC,
+	  features = list(FMC_geneSet$V1),
+	  name = 'fibromyocyte_marker'
+)
+```
+
+```{r}
+unique(carotid_SMC$condition)
+```
+
+```{r}
+carotid_SMC_plaque <- subset(
+  carotid_SMC,
+  subset = !is.na(carotid_SMC$Stenosis_perc) & !is.nan(carotid_SMC$Stenosis_perc)
+)
+```
+
+```{r}
+VlnPlot(carotid_SMC, features = c("fibromyocyte_marker1"), group.by = "Stenosis_perc")
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+meta <- carotid_SMC@meta.data
+```
+
+```{r}
+patient_df <- meta %>%
+  dplyr::as_tibble() %>%
+  dplyr::group_by(patient) %>%
+  dplyr::summarise(
+    n_cells = dplyr::n(),
+    fibromyocyte_marker1 = mean(fibromyocyte_marker1, na.rm = TRUE),
+    Stenosis_perc = mean(Stenosis_perc, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(patient_df, n = Inf)
+```
+
+```{r}
+patient_df <- subset.data.frame(patient_df, patient_df$Stenosis_perc > 0)
+patient_df
+```
+
+```{r}
+cor_test <- cor.test(
+  patient_df$fibromyocyte_marker1,
+  patient_df$Stenosis_perc,
+  method = "spearman",
+  exact = FALSE
+)
+
+rho_value <- cor_test$estimate
+p_value  <- cor_test$p.value
+
+rho_value
+p_value
+```
+
+```{r}
+ggplot(patient_df, aes(x = fibromyocyte_marker1,
+                       y = Stenosis_perc)) +
+  geom_point(size = 3) +
+  theme_classic() +
+  labs(
+    x = "Mean fibromyocyte_marker1 expression (per patient)",
+    y = "Stenosis (%)"
+  )
+
+```
+
+
+```{r}
+library(ggpubr)
+
+pdf("./FMC_Score_CarotidPlaque_PercentStenosis.pdf", useDingbats = FALSE, width=5, height=5)
+ggscatter(patient_df,
+          x = "fibromyocyte_marker1",
+          y = "Stenosis_perc",
+          add = "reg.line",
+          conf.int = TRUE,
+          cor.coef = TRUE,
+          cor.method = "pearson") 
+dev.off()
+```
+
+
+# tq mapped
+```{r}
+TQ <- readRDS("/Users/jamrute/Library/CloudStorage/Box-Box/Macbook_Files/Grad_School/Primary_Projects/Atherosclerosis/Projects/CITEseq_Atlas/analysis/final_analysis/Mouse_mapping/Quetermous_Mapping/Mouse_RNA_ATAC_timecourse/old/mouse_to_human/mouse_time_course_mapped_human.rds")
+```
+
+```{r}
+DefaultAssay(TQ) <- "RNA"
+TQ <- AddModuleScore(
+	  object = TQ,
+	  features = list(FMC_geneSet$V1),
+	  name = 'fibromyocyte_marker'
+)
+```
+
+```{r}
+Idents(TQ) <- "Week"
+TQ2 <- subset(TQ, idents = c("3wk","5wk","9wk","12wk"), invert = TRUE)
+```
+
+```{r}
+pdf("./FMC_DotPlot_TimeCourse_SMC.pdf", useDingbats = FALSE, width=3.5, height=2.8)
+DotPlot(TQ2, features = "fibromyocyte_marker1", group.by = "Week")
+dev.off()
+```
+
+# Ref mapping
+```{r}
+reference <- readRDS("/Users/jamrute/Library/CloudStorage/Box-Box/Macbook_Files/Grad_School/Primary_Projects/Atherosclerosis/Projects/CITEseq_Atlas/analysis/final_analysis/cell_types/smc_fib/smc_fib_annotated.rds")
+mapped <- readRDS("Multiome_SMC_ref_mapped.rds")
+```
+
+```{r}
+DimPlot(mapped, reduction = "ref.umap", group.by = "predicted.celltype", label.size = 4,
+        cols = paletteDiscrete(unique(reference$cell.state), set = "stallion"), label = FALSE)
+```
+
+```{r}
+mapped$predicted.pseudotime <- as.double(mapped$predicted.pseudotime)
+```
+
+```{r}
+FeaturePlot(mapped, reduction = "ref.umap", features = c("predicted.pseudotime")) + scale_color_gradientn(colors=paletteContinuous("horizon"), oob=scales::squish, limits=c(0.1,0.5)) 
+```
+
+
+```{r}
+FMC_geneSet <- read.table("./fibromyocyte_marker_genes.txt", header = FALSE, fill=TRUE)
+```
+
+```{r}
+DefaultAssay(mapped) <- "RNA"
+mapped <- AddModuleScore(
+	  object = mapped,
+	  features = list(FMC_geneSet$V1),
+	  name = 'fibromyocyte_marker1'
+)
+```
+
+```{r}
+FMC_geneSet2 <- read.table("./FMC2.txt", header = FALSE, fill=TRUE)
+```
+
+```{r}
+DefaultAssay(mapped) <- "RNA"
+mapped <- AddModuleScore(
+	  object = mapped,
+	  features = list(FMC_geneSet2$V1),
+	  name = 'fibromyocyte_marker2'
+)
+```
+
+
+```{r}
+FMC_geneSet3 <- read.table("./FMC3.txt", header = FALSE, fill=TRUE)
+```
+
+```{r}
+DefaultAssay(mapped) <- "RNA"
+mapped <- AddModuleScore(
+	  object = mapped,
+	  features = list(FMC_geneSet3$V1),
+	  name = 'fibromyocyte_marker3'
+)
+```
+
+```{r}
+mapped@meta.data
+```
+
+```{r}
+library(UpSetR)
+# Convert to a binary membership data frame
+all_genes <- unique(c(FMC_geneSet$V1, FMC_geneSet2$V1, FMC_geneSet3$V1))
+
+df <- data.frame(
+  gene      = all_genes,
+  FMC1     = as.integer(all_genes %in% FMC_geneSet$V1),
+  FMC2     = as.integer(all_genes %in% FMC_geneSet2$V1),
+  FMC3     = as.integer(all_genes %in% FMC_geneSet3$V1)
+)
+
+pdf("./upset_FMC.pdf", useDingbats = FALSE, width=10, height=10)
+
+upset(df, sets = c("FMC1", "FMC2", "FMC3"),
+      order.by = "freq",
+      keep.order = TRUE)
+
+dev.off()
+```
+
+```{r}
+FeaturePlot(mapped, reduction = "ref.umap", features = c("fibromyocyte_marker11"))+ scale_color_gradientn(colors=paletteContinuous("solarExtra"), oob=scales::squish, limits=c(0,0.5)) 
+
+FeaturePlot(mapped, reduction = "ref.umap", features = c("fibromyocyte_marker21"))+ scale_color_gradientn(colors=paletteContinuous("solarExtra"), oob=scales::squish, limits=c(0,0.5)) 
+
+FeaturePlot(mapped, reduction = "ref.umap", features = c("fibromyocyte_marker31"))+ scale_color_gradientn(colors=paletteContinuous("solarExtra"), oob=scales::squish, limits=c(0,0.5)) 
+```
+
+
+```{r}
+library(ggplot2)
+
+df <- mapped@meta.data
+markers <- c("fibromyocyte_marker11", "fibromyocyte_marker21", "fibromyocyte_marker31")
+
+# Compute Pearson correlation + 95% CI for each marker
+cor_results <- do.call(rbind, lapply(markers, function(m) {
+  test <- cor.test(df$predicted.pseudotime, df[[m]], method = "pearson")
+  data.frame(
+    marker = m,
+    r      = test$estimate,
+    lower  = test$conf.int[1],
+    upper  = test$conf.int[2],
+    pval   = test$p.value
+  )
+}))
+
+# Add significance stars
+cor_results$sig <- ifelse(cor_results$pval < 0.001, "***",
+                   ifelse(cor_results$pval < 0.01,  "**",
+                   ifelse(cor_results$pval < 0.05,  "*", "ns")))
+```
+
+```{r}
+ggplot(cor_results, aes(x = marker, y = r, color = marker)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2, linewidth = 1) +
+  geom_point(size = 4) +
+  geom_text(aes(label = sig, y = upper + 0.05), size = 5, color = "black") +
+  scale_color_manual(values = c("steelblue", "tomato", "seagreen")) +
+  labs(
+    title = "Correlation with Pseudotime",
+    x     = NULL,
+    y     = "Pearson r (95% CI)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 30, hjust = 1))
+
+ggsave("correlation_plot.pdf", width = 6, height = 5)
+```
+
+
+
+
+
+

@@ -1,0 +1,153 @@
+---
+title: "TAD_Loop_Counts_Sizes"
+author: "Ittai Eres"
+date: "2024-10-09"
+output: html_document
+---
+
+# Library and other setup
+```{r}
+library(dplyr)
+library(data.table)
+library(ggplot2)
+setwd("<path>/FULL_SAMPLES")
+samples <- c(SAMPLE_09, SAMPLE_10, SAMPLE_11, SAMPLE_12, SAMPLE_13, SAMPLE_14, SAMPLE_15, SAMPLE_16, SAMPLE_17, SAMPLE_18, SAMPLE_19, SAMPLE_20, SAMPLE_21, SAMPLE_22)
+```
+
+## Perform TAD analyses
+```{r}
+windows <- c(150, 250, 500)
+TADs <- list()
+
+options(scipen=999)
+for(SAMP in samples){
+  for(RES in windows){
+    TAD_df <- fread(paste0("~/<project>/", SAMP, "_TADs_", RES*1000, ".bed"))
+    TAD_df$Sample <- SAMP
+    TAD_df$Resolution <- paste0(RES, "kb")
+    TAD_df$Size <- TAD_df$V3-TAD_df$V2
+    TADs[[paste0(SAMP, "_", RES, "kb")]] <- TAD_df
+  }
+}
+
+ALL_TADs <- do.call(rbind, TADs)
+ALL_TADs$Resolution <- factor(ALL_TADs$Resolution, levels=c("150kb", "250kb", "500kb"))
+ALL_TADs$Sample <- factor(ALL_TADs$Sample)
+
+# Plot out counts faceted by Resolution
+ggplot(data=ALL_TADs, aes(x=Sample, fill=Resolution)) + geom_bar() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Window Size", title="TAD Counts Across Samples & Window Sizes") + ylab("TAD Count")
+
+ggsave("TAD_counts.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("TAD_counts.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+
+# Plot out sizes faceted by Resolution
+ggplot(data=ALL_TADs, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + geom_jitter(alpha=0.01, size=0.1) + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Window Size", title="TAD Sizes Across Samples & Window Sizes") + ylab("TAD Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red")
+
+#Remove points given large file size
+ggplot(data=ALL_TADs, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Window Size", title="TAD Sizes Across Samples & Window Sizes") + ylab("TAD Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red")
+
+ggsave("TAD_sizes.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("TAD_sizes.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+
+# Make a zoomed-in version:
+ggplot(data=ALL_TADs, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + geom_jitter(alpha=0.01, size=0.1) + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Window Size", title="TAD Sizes Across Samples & Window Sizes") + ylab("TAD Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red") + coord_cartesian(ylim=c(0, 2500000))
+
+#Remove points given file size
+ggplot(data=ALL_TADs, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Window Size", title="TAD Sizes Across Samples & Window Sizes") + ylab("TAD Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red") + coord_cartesian(ylim=c(0, 2500000))
+
+ggsave("TAD_sizes_zoomin.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("TAD_sizes_zoomin.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+```
+
+## Perform loop analyses--for HICCUPS Loops first
+```{r}
+resolutions <- c(2, 5, 10)
+Loops <- list()
+
+options(scipen=999)
+for(SAMP in samples){
+  for(RES in resolutions){
+    loop_df <- fread(paste0("<path>/FULL_SAMPLES/loops/loops_", RES, "kb", SAMP, ".bedpe"))
+    loop_df$Sample <- SAMP
+    loop_df$Resolution <- paste0(RES, "kb")
+    loop_df$Size <- loop_df$start2-loop_df$start1
+    Loops[[paste0(SAMP, "_", RES, "kb")]] <- loop_df
+  }
+}
+
+ALL_Loops <- do.call(rbind, Loops)
+ALL_Loops$Resolution <- factor(ALL_Loops$Resolution, levels=c("2kb", "5kb", "10kb"))
+ALL_Loops$Sample <- factor(ALL_Loops$Sample)
+
+#Plot!
+# Plot out counts faceted by Resolution
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution)) + geom_bar() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Counts Across Samples & Resolutions, HiCCUPS") + ylab("Significant Loop Count")
+
+ggsave("Hiccups_Loop_counts.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("Hiccups_Loop_counts.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+
+# Plot out sizes faceted by Resolution
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + geom_jitter(alpha=0.01, size=0.1) + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Sizes Across Samples & Resolutions, HiCCUPS") + ylab("Significant Loop Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red")
+
+#Remove points given file size
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Sizes Across Samples & Resolutions, HiCCUPS") + ylab("Significant Loop Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red")
+
+ggsave("Hiccups_Loop_sizes.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("Hiccups_Loop_sizes.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+
+# Zoomed-in version
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + geom_jitter(alpha=0.01, size=0.1) + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Sizes Across Samples & Resolutions, HiCCUPS") + ylab("Significant Loop Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red") + coord_cartesian(ylim=c(0, 1100000))
+
+#Remove points given massive file size
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Sizes Across Samples & Resolutions, HiCCUPS") + ylab("Significant Loop Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red") + coord_cartesian(ylim=c(0, 1100000))
+
+ggsave("Hiccups_Loop_sizes_zoomin.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("Hiccups_Loop_sizes_zoomin.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+
+```
+
+## Perform loop analyses--for FitHiC Loops now
+```{r}
+resolutions <- c(2, 5, 10)
+Loops <- list()
+
+options(scipen=999)
+for(SAMP in samples){
+  for(RES in resolutions){
+    loop_df <- fread(paste0("<path>/FULL_SAMPLES/", SAMP, "/fithic/", RES*1000, "/", SAMP, "_loops_", RES*1000, ".bedpe"))
+    loop_df$Sample <- SAMP
+    loop_df$Resolution <- paste0(RES, "kb")
+    loop_df$Size <- loop_df$start2-loop_df$start1
+    Loops[[paste0(SAMP, "_", RES, "kb")]] <- loop_df
+  }
+}
+
+ALL_Loops <- do.call(rbind, Loops)
+ALL_Loops$Resolution <- factor(ALL_Loops$Resolution, levels=c("2kb", "5kb", "10kb"))
+ALL_Loops$Sample <- factor(ALL_Loops$Sample)
+
+#Plot!
+# Plot out counts faceted by Resolution
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution)) + geom_bar() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Counts Across Samples & Resolutions, FitHiC") + ylab("Significant Loop Count")
+
+ggsave("FitHiC_Loop_counts.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("FitHiC_Loop_counts.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+
+# Plot out sizes faceted by Resolution
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + geom_jitter(alpha=0.01, size=0.1) + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Sizes Across Samples & Resolutions, FitHiC") + ylab("Significant Loop Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red")
+
+#Remove points given large file size
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Sizes Across Samples & Resolutions, FitHiC") + ylab("Significant Loop Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red")
+
+ggsave("FitHiC_Loop_sizes.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("FitHiC_Loop_sizes.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+
+# Zoomed-in version
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + geom_jitter(alpha=0.01, size=0.1) + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Sizes Across Samples & Resolutions, FitHiC") + ylab("Significant Loop Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red") + coord_cartesian(ylim=c(0, 15000000))
+
+#Remove points given large file size
+ggplot(data=ALL_Loops, aes(x=Sample, fill=Resolution, y=Size)) + geom_violin() + facet_wrap(~Resolution) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), text=element_text(size=8)) + labs(fill="Resolution", title="Significant Loop Sizes Across Samples & Resolutions, FitHiC") + ylab("Significant Loop Size") + stat_summary(fun = "mean", geom = "crossbar", width = 0.5, colour = "red") + coord_cartesian(ylim=c(0, 15000000))
+
+ggsave("FitHiC_Loop_sizes_zoomin.pdf", device="pdf", height=100, width=88, units="mm", scale=1.5)
+ggsave("FitHiC_Loop_sizes_zoomin.svg", device="svg", height=100, width=88, units="mm", scale=1.5)
+```

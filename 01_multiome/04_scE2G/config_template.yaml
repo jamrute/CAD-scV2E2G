@@ -1,0 +1,10 @@
+# TODO: replace with the sc-E2G config actually used for the paper.
+# One entry per cell type (11 total).
+cell_clusters:
+  - {cluster: SMC,         atac_frag_file: <path>, rna_matrix_file: <path>}
+  - {cluster: Endothelium, atac_frag_file: <path>, rna_matrix_file: <path>}
+  - {cluster: Fibroblast,  atac_frag_file: <path>, rna_matrix_file: <path>}
+  - {cluster: Myeloid,     atac_frag_file: <path>, rna_matrix_file: <path>}
+  # ... Adipocyte, BCells, Epicardial, Lymphatic, Neuron, PlasmaCells, TNKCell
+model: scE2G_multiome
+score_threshold: 0.171

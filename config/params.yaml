@@ -1,0 +1,127 @@
+# ---------------------------------------------------------------------------
+# Analysis parameters, transcribed from the Methods / Supplementary Methods.
+# Scripts read from here so thresholds live in exactly one place.
+# ---------------------------------------------------------------------------
+genome: GRCh38
+
+multiome:
+  qc:
+    min_tss_enrichment: 4          # TSS enrichment > 4
+    min_nfrags: 1000               # nFrags > 1000
+    min_numi: 200                  # 200 < nUMI < 50,000
+    max_numi: 50000
+    max_percent_mt: 5
+  sct_vars_to_regress: [percent.mt, nCount_RNA]
+  harmony_group_by: sample
+  marker_genes:
+    adj_p: 0.05
+    log2fc: 0.58
+  marker_peaks:                    # for LDSC
+    fdr: 0.01
+    log2fc: 1
+  da_peaks_heatmap:
+    fdr: 0.1
+    log2fc: 0.5
+
+scE2G:
+  model: scE2G_Multiome
+  candidate_window_bp: 5000000
+  score_threshold: 0.171           # 70% recall on K562 CRISPRi benchmark
+
+ldsc:
+  bonferroni_p: 0.00833            # 0.05 / 6 traits
+
+gwas_overlap:
+  genome_wide_p: 5.0e-8
+  conditional_fdr: 0.01
+  ld_r2: 0.8
+  ld_window_kb: 250
+
+genotypes:
+  array_qc:
+    common_maf: 0.05
+    common_min_callrate: 0.95
+    rare_min_callrate: 0.99
+  imputation:
+    min_r2: 0.3
+    min_maf: 0.05
+  n_geno_pcs: 4
+
+caqtl:
+  cell_types: [SMC, Endothelium, Myeloid, Fibroblast]
+  min_cells_per_sample: 20
+  min_mean_reads_per_peak: 5
+  cis_window_bp: 10000
+  samtools_exclude_flag: 1280
+  covariates: [age, sex, site]
+  n_permutations: 4
+  fdr_levels: [0.01, 0.05, 0.10]
+  reported_fdr: 0.10               # 11,269 caQTLs reported at 10% FDR (main text)
+
+pme:
+  n_acc_pcs: 4
+  n_geno_pcs: 4
+  dynamic_input_fdr: 0.05          # lead variants of pseudobulk caQTLs at FDR < 5%
+  dynamic_qvalue: 0.05
+  fmc_top_n_genes: 100             # Wirka et al. 2019 modulated-SMC markers
+
+perturbseq:
+  qc:
+    min_cells_per_gene: 3
+    min_features: 200
+    max_features: 7500
+    max_percent_mt: 25
+  n_pcs: 30
+  prtb_k_nn: 20
+  mixscape:
+    min_de_genes: 5
+    iterations: 10
+    prtb_type: KD
+  lda:
+    n_pcs: 10
+    logfc_threshold: 0.25
+  deseq2:
+    n_pseudoreps: 3
+    min_total_counts: 10
+    fdr: 0.05
+  fgsea:
+    min_size: 10
+    max_size: 500
+    n_perm: 1000
+  cnmf:
+    k_range: [5, 6, 7, 8, 9, 10]
+    n_iter: 100
+    seed: 42
+    k_selected: 8
+    local_density_threshold: 0.01
+    min_cells_per_gene: 5
+    top_genes_for_annotation: 100
+  stim_markers:
+    fdr: 0.05
+    abs_log2fc: 0.25
+  rra_fdr: 0.05
+  rra_top_n_plot: 30
+
+hic:
+  resolution_bp: 5000
+  tad_resolution_bp: 25000
+  n_samples: 15
+  ontad_nested_score: 1
+  adapter_5p_trim: 5
+
+hichip:
+  bin_bp: 5000
+
+ctcf_enrichment:
+  n_permutations: 1000
+  seed: 1
+
+ctcf_allelic_controls:
+  jaspar_motif: MA0139.1
+  positive: {min_delta_score: 6.0, min_max_score: 8.0}
+  negative: {max_delta_score: 0.2, min_both_scores: 8.0}
+  amplicon_bp: [75, 150]
+
+bulk_rnaseq_amotl2:
+  abs_logfc: 0.5
+  fdr: 0.05

@@ -1,0 +1,61 @@
+# ---- Data: never commit (patient-derived, large) ----
+data/
+results/
+*.bam
+*.bai
+*.cram
+*.fastq*
+*.fq.gz
+*.vcf
+*.vcf.gz
+*.bcf
+*.bed
+*.bed.gz
+*.bedpe
+*.bedpe.gz
+*.tsv.gz
+*.h5
+*.h5ad
+*.h5seurat
+*.rds
+*.RData
+*.Rdata
+*.hic
+*.cool
+*.mcool
+*.pairs*
+*.arrow
+ArchRProject*/
+# allow small curated resources
+!resources/**/*.bed
+!resources/**/*.tsv
+
+# ---- Local config ----
+config/*.local.yaml
+.env
+
+# ---- Environments / caches ----
+.Rproj.user/
+.Rhistory
+renv/library/
+renv/staging/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.nextflow*
+work/
+.snakemake/
+
+# ---- OS / editors ----
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ---- Logs ----
+logs/
+*.log
+slurm-*.out
+
+# CI workflow held back from the initial push (token lacked Workflows permission)
+.github/workflows/

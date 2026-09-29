@@ -1,0 +1,2226 @@
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(sctransform)
+library(ggplot2)
+library(harmony)
+library(ArchR)
+library(ggsci)
+options(future.globals.maxSize = 90000 * 1024^2) # for 50 Gb RAM
+```
+
+```{r}
+library(Seurat)
+library(Matrix)
+
+# Point to the DGE_filtered directory
+data_dir <- "./DGE_filtered/"
+
+# Load the three components
+counts <- ReadMtx(
+  mtx    = file.path(data_dir, "count_matrix.mtx"),
+  cells  = file.path(data_dir, "cell_metadata.csv"),
+  features = file.path(data_dir, "all_genes.csv"),
+  cell.column = 1,       # column in cell_metadata.csv with cell barcodes
+  feature.column = 2,    # column in all_genes.csv with gene symbols (col 1 = gene_id, col 2 = gene_name)
+  cell.sep = ",",
+  feature.sep = ",",
+  skip.cell = 1,         # skip header row
+  skip.feature = 1,
+  mtx.transpose = TRUE   # Parse MTX is genes x cells, Seurat expects cells x genes
+)
+
+# Create Seurat object
+sample <- CreateSeuratObject(
+  counts = counts,
+  project = "ParseSeq",
+  min.cells = 3,
+  min.features = 200
+)
+```
+
+```{r}
+meta <- read.csv(file.path(data_dir, "cell_metadata.csv"), row.names = 1)
+
+# Subset to cells retained in the Seurat object
+meta <- meta[colnames(sample), ]
+sample <- AddMetaData(sample, metadata = meta)
+```
+
+# Look at the features
+```{r}
+sample[["percent.mt"]] <- PercentageFeatureSet(sample, pattern = "^MT-")
+VlnPlot(sample, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), pt.size = 0, group.by = "species")
+```
+```{r}
+sample
+```
+
+```{r}
+sample <- subset(sample, subset = nFeature_RNA > 200 & nFeature_RNA < 7500 & percent.mt < 25)
+```
+
+```{r}
+sample
+```
+```{r}
+saveRDS(sample, "combined.rds")
+```
+
+```{r}
+sample <- readRDS("combined.rds")
+```
+
+```{r}
+Idents(sample) <- "sample"
+sample <- subset(sample, idents = c("untransduced","FAP","chr2_162254026","chr2_162256158"), invert = TRUE)
+```
+
+```{r}
+fun <- function(x) {
+  if (x == "ADAMTS7") {"ADAMTS7"} 
+  else if (x == "BMP1") {"BMP1"}
+  else if (x == "CFDP1") {"CFDP1"}
+  else if (x == "COL4A1") {"COL4A1"}
+  else if (x == "MAT2A") {"MAT2A"}
+  else if (x == "MRAS") {"MRAS"}
+  else if (x == "MYO9B") {"MYO9B"}
+  else if (x == "NTC1") {"NT"}
+  else if (x == "NTC2") {"NT"}
+  else if (x == "TWIST1") {"TWIST1"}
+  else if (x == "chr13_110388102") {"COL4A1_Enh"}
+  else if (x == "chr15_78760118") {"ADAMTS7_Enh"}
+  else if (x == "chr16_75402150") {"CFDP1_Enh"}
+  else if (x == "chr19_17107918") {"MYO9B_Enh"}
+  else if (x == "chr2_85535336") {"MAT2A_Enh"}
+  else if (x == "chr3_138351937") {"MRAS_Enh"}
+  else if (x == "chr7_19008764") {"TWIST1_Enh"}
+  else if (x == "chr8_22188651") {"BMP1_Enh"}
+}
+sample$PERTURB <- mapply(fun, sample$sample)
+```
+
+```{r}
+sample$PERTURB <- factor(sample$PERTURB, levels = c("NT",
+                                                    "ADAMTS7","ADAMTS7_Enh","BMP1","BMP1_Enh","CFDP1","CFDP1_Enh","COL4A1","COL4A1_Enh",
+                                                    "MAT2A","MAT2A_Enh","MRAS","MRAS_Enh","MYO9B","MYO9B_Enh","TWIST1","TWIST1_Enh"))
+```
+
+```{r}
+fun <- function(x) {
+  if (x == "ADAMTS7") {"Perturbed"} 
+  else if (x == "BMP1") {"Perturbed"}
+  else if (x == "CFDP1") {"Perturbed"}
+  else if (x == "COL4A1") {"Perturbed"}
+  else if (x == "MAT2A") {"Perturbed"}
+  else if (x == "MRAS") {"Perturbed"}
+  else if (x == "MYO9B") {"Perturbed"}
+  else if (x == "NTC1") {"NT"}
+  else if (x == "NTC2") {"NT"}
+  else if (x == "TWIST1") {"Perturbed"}
+  else if (x == "chr13_110388102") {"Perturbed"}
+  else if (x == "chr15_78760118") {"Perturbed"}
+  else if (x == "chr16_75402150") {"Perturbed"}
+  else if (x == "chr19_17107918") {"Perturbed"}
+  else if (x == "chr2_85535336") {"Perturbed"}
+  else if (x == "chr3_138351937") {"Perturbed"}
+  else if (x == "chr7_19008764") {"Perturbed"}
+  else if (x == "chr8_22188651") {"Perturbed"}
+}
+sample$crispr <- mapply(fun, sample$sample)
+
+sample$crispr <- factor(sample$crispr, levels = c("NT","Perturbed"))
+```
+
+```{r}
+pdf("./nFeature_RNA.pdf", useDingbats = FALSE, width=5, height=4)
+VlnPlot(sample, features = c("nFeature_RNA"), pt.size = 0, group.by = "sample") + NoLegend()
+dev.off()
+
+pdf("./nCount_RNA.pdf", useDingbats = FALSE, width=5, height=4)
+VlnPlot(sample, features = c("nCount_RNA"), pt.size = 0, group.by = "sample") + NoLegend()
+dev.off()
+
+pdf("./percent.mt.pdf", useDingbats = FALSE, width=5, height=4)
+VlnPlot(sample, features = c("percent.mt"), pt.size = 0, group.by = "sample") + NoLegend()
+dev.off()
+```
+```{r}
+DefaultAssay(object = sample) <- 'RNA'
+sample <- NormalizeData(object = sample) %>% FindVariableFeatures() %>% ScaleData()
+sample <- RunPCA(object = sample)
+sample <- RunUMAP(object = sample, dims = 1:30)
+```
+
+```{r}
+Idents(sample) <- "crispr"
+counts_df <- AverageExpression(sample, features = c("ADAMTS7","BMP1","CFDP1","COL4A1","MAT2A","MRAS","MYO9B","TWIST1"), group.by = "PERTURB")$RNA
+counts_filtered_df <- counts_df[apply(counts_df, MARGIN = 1, FUN = function(x) sd(x) != 0),]
+
+library(pheatmap)
+library(ArchR)
+pdf("./heatmap_perturbed_genes.pdf", useDingbats = FALSE, width=5, height=2.5)
+pheatmap(counts_filtered_df[c("ADAMTS7","BMP1","CFDP1","COL4A1","MAT2A","MRAS","MYO9B","TWIST1"),], cluster_cols = FALSE, cluster_rows = FALSE, scale = "row", border_color = NA, col=paletteContinuous("solarExtra"), fontsize = 7)
+dev.off()
+```
+
+```{r}
+DimPlot(sample, reduction = "umap", group.by = "PERTURB", label.size = 4,
+        cols = paletteDiscrete(unique(sample$PERTURB), set = "stallion"), label = FALSE, raster = TRUE) + ggtitle("Perturbation")
+```
+
+```{r}
+DimPlot(
+  object = sample, 
+  group.by = 'crispr',
+  reduction = "umap", 
+  split.by = "crispr", 
+  ncol = 2, 
+  cols = c("grey39","goldenrod3"),
+  raster = TRUE) + 
+  ggtitle("Perturbation Status") 
+```
+
+```{r}
+# Calculate perturbation signature (PRTB).
+sample<- CalcPerturbSig(
+  object = sample, 
+  assay = "RNA", 
+  slot = "data", 
+  gd.class ="PERTURB", 
+  nt.cell.class = "NT", 
+  reduction = "pca", 
+  ndims = 30, 
+  num.neighbors = 20,
+  new.assay.name = "PRTB")
+```
+```{r}
+# Prepare PRTB assay for dimensionality reduction: 
+# Normalize data, find variable features and center data.
+DefaultAssay(object = sample) <- 'PRTB'
+
+# Use variable features from RNA assay.
+VariableFeatures(object = sample) <- VariableFeatures(object = sample[["RNA"]])
+sample <- ScaleData(object = sample, do.scale = F, do.center = T)
+
+# Run PCA to reduce the dimensionality of the data.
+sample <- RunPCA(object = sample, reduction.key = 'prtbpca', reduction.name = 'prtbpca')
+
+# Run UMAP to visualize clustering in 2-D.
+sample <- RunUMAP(
+  object = sample, 
+  dims = 1:30, 
+  reduction = 'prtbpca', 
+  reduction.key = 'prtbumap', 
+  reduction.name = 'prtbumap')
+```
+
+```{r}
+DimPlot(sample, reduction = "prtbumap", group.by = "PERTURB", label.size = 4,
+        cols = paletteDiscrete(unique(sample$PERTURB), set = "stallion"), label = FALSE, raster = TRUE) + ggtitle("Perturbation")
+```
+
+```{r}
+DimPlot(
+  object = sample, 
+  group.by = 'crispr',
+  reduction = "prtbumap", 
+  split.by = "crispr", 
+  ncol = 2, 
+  cols = c("grey39","goldenrod3"),
+  raster = TRUE) + 
+  ggtitle("Perturbation Status") 
+```
+```{r}
+# Run mixscape.
+sample <- RunMixscape(
+  object = sample, 
+  assay = "PRTB", 
+  slot = "scale.data", 
+  labels = "PERTURB", 
+  nt.class.name = "NT", 
+  min.de.genes = 5, 
+  iter.num = 10, 
+  de.assay = "RNA", 
+  verbose = F,
+  prtb.type = "KD")
+```
+
+```{r}
+df <- prop.table(table(sample$mixscape_class.global, sample$PERTURB), 2)
+df
+```
+```{r}
+ggplot(sample@meta.data, aes(x=PERTURB, fill=mixscape_class.global)) + geom_bar(position = "fill") + theme_linedraw() + theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = c("coral1","grey79","grey49")) + theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()) 
+```
+
+```{r}
+unique(sample$PERTURB)
+```
+
+```{r}
+# Explore the perturbation scores of cells.
+PlotPerturbScore(object = sample, 
+                 target.gene.class = "PERTURB",
+                 target.gene.ident = "BMP1_Enh", 
+                 mixscape.class = "mixscape_class", 
+                 col = "coral2",
+                 prtb.type = "KD") + labs(fill = "mixscape class")
+```
+
+```{r}
+# Remove non-perturbed cells and run LDA to reduce the dimensionality of the data.
+Idents(sample) <- "mixscape_class.global"
+sub <- subset(sample, idents = c("KD", "NT"))
+```
+
+```{r}
+counts_df <- AverageExpression(sub, features = c("ADAMTS7","BMP1","CFDP1","COL4A1","MAT2A","MRAS","MYO9B","TWIST1"), group.by = "PERTURB")$RNA
+counts_filtered_df <- counts_df[apply(counts_df, MARGIN = 1, FUN = function(x) sd(x) != 0),]
+
+library(pheatmap)
+library(ArchR)
+pdf("./heatmap_perturbed_genes_postMixspace.pdf", useDingbats = FALSE, width=5, height=2.5)
+pheatmap(counts_filtered_df[c("ADAMTS7","BMP1","CFDP1","COL4A1","MAT2A","MRAS","MYO9B","TWIST1"),], cluster_cols = FALSE, cluster_rows = FALSE, scale = "row", border_color = NA, col=paletteContinuous("solarExtra"), fontsize = 7)
+dev.off()
+```
+
+```{r}
+# Run LDA.
+sub <- MixscapeLDA(
+  object = sub, 
+  assay = "RNA", 
+  pc.assay = "PRTB", 
+  labels = "PERTURB", 
+  nt.label = "NT", 
+  npcs = 10, 
+  logfc.threshold = 0.25, 
+  verbose = TRUE)
+
+```
+
+```{r}
+# Use LDA results to run UMAP and visualize cells on 2-D. 
+# Here, we note that the number of the dimensions to be used is equal to the number of 
+# labels minus one (to account for NT cells).
+sub <- RunUMAP(
+  object = sub,
+  dims = 1:16,
+  reduction = 'lda',
+  reduction.key = 'ldaumap',
+  reduction.name = 'ldaumap')
+```
+
+```{r}
+unique(sub$mixscape_class)
+```
+
+```{r}
+# Visualize UMAP clustering results.
+Idents(sub) <- "mixscape_class"
+sub$mixscape_class <- factor(sub$mixscape_class, levels = c("NT","ADAMTS7 KD","ADAMTS7_Enh KD","BMP1 KD","BMP1_Enh KD",
+                                                               "CFDP1 KD","CFDP1_Enh KD","COL4A1 KD","COL4A1_Enh KD",
+                                                               "MAT2A KD","MAT2A_Enh KD","MRAS KD","MRAS_Enh KD",
+                                                               "MYO9B KD","MYO9B_Enh KD","TWIST1 KD","TWIST1_Enh KD"))
+```
+
+```{r}
+DimPlot(sub, reduction = "ldaumap", group.by = "mixscape_class", label.size = 4,
+        cols = paletteDiscrete(unique(sub$mixscape_class), set = "stallion"), label = FALSE, raster = TRUE)
+```
+
+```{r}
+saveRDS(sample, "integrated.rds")
+saveRDS(sub, "sub_mixspace.rds")
+```
+
+```{r}
+sub <- readRDS("sub_mixspace.rds")
+```
+
+```{r}
+sample <- readRDS("integrated.rds")
+```
+
+```{r}
+table(sub$PERTURB)
+```
+
+```{r}
+library(conflicted)
+conflict_prefer("filter",    "dplyr")
+conflict_prefer("arrange",   "dplyr")
+conflict_prefer("desc",      "dplyr")
+conflict_prefer("summarise", "dplyr")
+conflict_prefer("n",         "dplyr")
+conflict_prefer("select",    "dplyr")
+conflict_prefer("mutate",    "dplyr")
+
+```
+
+### Additional analyses
+
+```{r}
+# KD classification rate (ko_rate)
+ko_rate <- sample@meta.data %>%
+  dplyr::filter(PERTURB != "NT") %>%
+  dplyr::group_by(PERTURB) %>%
+  dplyr::summarise(
+    n_cells  = dplyr::n(),
+    n_kd     = sum(mixscape_class.global == "KD"),
+    kd_rate  = n_kd / n_cells
+  ) %>%
+  dplyr::arrange(dplyr::desc(kd_rate))
+
+print(ko_rate)
+```
+
+```{r}
+# Transcriptional Distance from NT in PRTB PCA Space
+
+# Extract PRTB PCA embeddings from full object
+pca_embed <- Embeddings(sample, "prtbpca")[, 1:30]
+meta      <- sample@meta.data
+
+# NT centroid
+ntc_centroid <- pca_embed[meta$mixscape_class.global == "NT", ] %>%
+  colMeans()
+
+# Per-perturbation centroid distance (KD cells only)
+perturbations <- levels(sample$PERTURB)
+perturbations <- perturbations[perturbations != "NT"]
+
+effect_sizes <- lapply(perturbations, function(pert) {
+  cells_pert <- rownames(meta)[meta$PERTURB == pert & meta$mixscape_class.global == "KD"]
+  if (length(cells_pert) < 5) return(NULL)
+  pert_centroid <- colMeans(pca_embed[cells_pert, , drop = FALSE])
+  dist_val      <- sqrt(sum((pert_centroid - ntc_centroid)^2))
+  data.frame(PERTURB = pert, n_kd_cells = length(cells_pert), prtb_pc_distance = dist_val)
+}) %>%
+  bind_rows() %>%
+  arrange(desc(prtb_pc_distance))
+
+print(effect_sizes)
+```
+
+```{r}
+# Pseudobulk DE with DESeq2
+
+library(DESeq2)
+
+# Work from sub (KD + NT cells only, post-Mixscape)
+DefaultAssay(sub) <- "RNA"
+
+# Function to run DESeq2 for one perturbation vs NT
+run_deseq2_vs_nt <- function(seurat_obj, pert_name, n_pseudoreps = 3) {
+  
+  cells_pert <- rownames(seurat_obj@meta.data)[
+    seurat_obj$PERTURB == pert_name & seurat_obj$mixscape_class.global == "KD"
+  ]
+  cells_nt <- rownames(seurat_obj@meta.data)[
+    seurat_obj$mixscape_class.global == "NT"
+  ]
+  
+  if (length(cells_pert) < 10) {
+    message("Skipping ", pert_name, ": too few KD cells")
+    return(NULL)
+  }
+  
+  # Assign pseudo-replicate labels by randomly splitting cells
+  set.seed(42)
+  pert_rep <- sample(1:n_pseudoreps, length(cells_pert), replace = TRUE)
+  nt_rep   <- sample(1:n_pseudoreps, length(cells_nt),   replace = TRUE)
+  
+  # Build count matrix
+  counts_pert <- GetAssayData(seurat_obj, slot = "counts")[, cells_pert]
+  counts_nt   <- GetAssayData(seurat_obj, slot = "counts")[, cells_nt]
+  
+  # Aggregate by pseudo-replicate (pseudobulk)
+  pb_pert <- sapply(1:n_pseudoreps, function(r) rowSums(counts_pert[, pert_rep == r, drop = FALSE]))
+  pb_nt   <- sapply(1:n_pseudoreps, function(r) rowSums(counts_nt[,   nt_rep   == r, drop = FALSE]))
+  
+  colnames(pb_pert) <- paste0(pert_name, "_rep", 1:n_pseudoreps)
+  colnames(pb_nt)   <- paste0("NT_rep",           1:n_pseudoreps)
+  
+  pb_mat  <- cbind(pb_pert, pb_nt)
+  col_data <- data.frame(
+    condition = factor(c(rep("KD", n_pseudoreps), rep("NT", n_pseudoreps)),
+                       levels = c("NT", "KD")),
+    row.names = colnames(pb_mat)
+  )
+  
+  dds <- DESeqDataSetFromMatrix(pb_mat, colData = col_data, design = ~condition)
+  dds <- dds[rowSums(counts(dds)) >= 10, ]   # filter lowly expressed genes
+  dds <- DESeq(dds, quiet = TRUE)
+  
+  res <- results(dds, contrast = c("condition", "KD", "NT"), 
+                 independentFiltering = TRUE, alpha = 0.05) %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("gene") %>%
+    arrange(padj)
+  
+  return(res)
+}
+
+# Run for all perturbations
+perturbations <- levels(sub@meta.data$PERTURB)
+perturbations <- perturbations[perturbations != "NT"]
+
+de_results <- list()
+for (pert in perturbations) {
+  message("Running DESeq2 for: ", pert)
+  de_results[[pert]] <- run_deseq2_vs_nt(sub, pert)
+}
+```
+
+```{r}
+# Save
+saveRDS(de_results, "de_results_deseq2.rds")
+```
+
+```{r}
+de_results <- readRDS("de_results_deseq2.rds")
+```
+
+```{r}
+df1 <- de_results$ADAMTS7_Enh
+df1
+```
+
+```{r}
+df1 <- subset.data.frame(df1, df1$padj < 0.05)
+df_up <- subset.data.frame(df1, df1$log2FoldChange > 0)
+df_down <- subset.data.frame(df1, df1$log2FoldChange < 0)
+```
+
+
+
+```{r}
+mean_lfc <- lapply(names(de_results), function(pert) {
+  res <- de_results[[pert]]
+  if (is.null(res)) return(NULL)
+  sig <- res %>% filter(!is.na(padj), padj < 0.05)
+  data.frame(
+    PERTURB       = pert,
+    n_sig_genes   = nrow(sig),
+    mean_abs_lfc  = ifelse(nrow(sig) > 0, mean(abs(sig$log2FoldChange)), NA)
+  )
+}) %>%
+  bind_rows() %>%
+  arrange(desc(mean_abs_lfc))
+
+print(mean_lfc)
+```
+
+```{r}
+# Join all three metrics
+effect_summary <- ko_rate %>%
+  left_join(effect_sizes, by = "PERTURB") %>%
+  left_join(mean_lfc,     by = "PERTURB") %>%
+  mutate(
+    type = ifelse(grepl("_Enh", PERTURB), "Enhancer KD", "Gene KD")
+  ) %>%
+  arrange(desc(prtb_pc_distance))
+
+print(effect_summary)
+
+# Plot: PC distance ranked bar, colored by type
+library(ggplot2)
+
+pdf("./perturbation_effect_size.pdf", width = 5, height = 4, useDingbats = FALSE)
+ggplot(effect_summary, aes(x = reorder(PERTURB, prtb_pc_distance), 
+                            y = prtb_pc_distance, fill = type)) +
+  geom_col() +
+  scale_fill_manual(values = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")) +
+  coord_flip() +
+  labs(
+    x    = NULL,
+    y    = "Transcriptional distance from NT\n(PRTB PCA space)",
+    fill = NULL
+  ) +
+  theme_classic(base_size = 10) +
+  theme(legend.position = "top")
+dev.off()
+```
+
+```{r}
+set.seed(42)
+n_boot <- 1000
+
+boot_distances <- lapply(perturbations, function(pert) {
+  cells_pert <- rownames(meta)[meta$PERTURB == pert & meta$mixscape_class.global == "KD"]
+  if (length(cells_pert) < 5) return(NULL)
+  boot_dist <- replicate(n_boot, {
+    boot_cells <- sample(cells_pert, replace = TRUE)
+    centroid   <- colMeans(pca_embed[boot_cells, , drop = FALSE])
+    sqrt(sum((centroid - ntc_centroid)^2))
+  })
+  data.frame(PERTURB = pert, 
+             ci_low  = quantile(boot_dist, 0.025),
+             ci_high = quantile(boot_dist, 0.975))
+}) %>% bind_rows()
+
+effect_sizes <- effect_sizes %>% left_join(boot_distances, by = "PERTURB")
+```
+
+```{r}
+# Join all three metrics
+effect_summary <- ko_rate %>%
+  left_join(effect_sizes, by = "PERTURB") %>%
+  left_join(mean_lfc,     by = "PERTURB") %>%
+  mutate(
+    type = ifelse(grepl("_Enh", PERTURB), "Enhancer KD", "Gene KD")
+  ) %>%
+  arrange(desc(prtb_pc_distance))
+
+print(effect_summary)
+
+# Plot: PC distance ranked bar, colored by type
+library(ggplot2)
+
+pdf("./perturbation_effect_size_wError.pdf", width = 5, height = 4, useDingbats = FALSE)
+ggplot(effect_summary, aes(x = reorder(PERTURB, prtb_pc_distance), 
+                            y = prtb_pc_distance, fill = type)) +
+  geom_col() +
+  scale_fill_manual(values = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")) +
+  coord_flip() +
+  labs(
+    x    = NULL,
+    y    = "Transcriptional distance from NT\n(PRTB PCA space)",
+    fill = NULL
+  ) +
+  theme_classic(base_size = 10) +
+  theme(legend.position = "top") + geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2)
+dev.off()
+```
+
+
+
+
+```{r}
+DefaultAssay(sub)    <- "RNA"
+
+# Perturbation levels (no NT)
+all_perts <- levels(sub$PERTURB)
+all_perts <- all_perts[all_perts != "NT"]
+
+gene_kds <- all_perts[!grepl("_Enh", all_perts)]
+enh_kds  <- all_perts[grepl("_Enh",  all_perts)]
+```
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(DESeq2)
+library(fgsea)
+library(msigdbr)
+library(decoupleR)
+library(pheatmap)
+library(ArchR)
+library(conflicted)
+```
+
+```{r}
+# Load gene sets: Hallmark + GO Biological Process
+msig_h  <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, gene_symbol) %>%
+  split(f = .$gs_name) %>%
+  lapply(function(x) x$gene_symbol)
+
+msig_go <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
+  dplyr::select(gs_name, gene_symbol) %>%
+  split(f = .$gs_name) %>%
+  lapply(function(x) x$gene_symbol)
+
+gene_sets <- c(msig_h, msig_go)
+
+# Run fgsea per perturbation
+gsea_results <- lapply(names(de_results), function(pert) {
+  res <- de_results[[pert]]
+  if (is.null(res)) return(NULL)
+  
+  # Ranked vector: log2FC, named by gene, NAs removed
+  ranked <- res %>%
+    dplyr::filter(!is.na(log2FoldChange), !is.na(padj)) %>%
+    dplyr::arrange(dplyr::desc(log2FoldChange))
+  
+  ranks <- setNames(ranked$log2FoldChange, ranked$gene)
+  
+  set.seed(42)
+  fgseaRes <- fgsea(pathways = gene_sets,
+                    stats    = ranks,
+                    minSize  = 15,
+                    maxSize  = 500,
+                    nPerm    = 1000) %>%
+    dplyr::arrange(padj)
+  
+  fgseaRes$PERTURB <- pert
+  return(fgseaRes)
+})
+names(gsea_results) <- names(de_results)
+
+saveRDS(gsea_results, "gsea_results.rds")
+
+# Summary dotplot — top 5 Hallmark pathways per perturbation
+hallmark_summary <- lapply(names(gsea_results), function(pert) {
+  res <- gsea_results[[pert]]
+  if (is.null(res)) return(NULL)
+  res %>%
+    dplyr::filter(grepl("^HALLMARK", pathway), padj < 0.05) %>%
+    dplyr::slice_min(padj, n = 5) %>%
+    dplyr::mutate(PERTURB = pert)
+}) %>%
+  bind_rows()
+```
+
+```{r}
+pdf("./gsea_hallmark_dotplot.pdf", width = 10, height = 7, useDingbats = FALSE)
+ggplot(hallmark_summary, aes(x = PERTURB, y = pathway, 
+                              size = -log10(padj), color = NES)) +
+  geom_point() +
+  scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_classic(base_size = 9) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = NULL, size = "-log10(padj)", color = "NES")
+dev.off()
+```
+
+```{r}
+# Cross-Perturbation Transcriptional Similarity
+library(Matrix)
+
+# Build LFC matrix: genes x perturbations
+all_genes <- Reduce(dplyr::union, lapply(de_results, function(x) if (!is.null(x)) x$gene))
+
+lfc_matrix <- sapply(names(de_results), function(pert) {
+  res <- de_results[[pert]]
+  if (is.null(res)) return(rep(NA, length(all_genes)))
+  lfc <- setNames(res$log2FoldChange, res$gene)
+  lfc[all_genes]   # NA for genes not tested
+})
+rownames(lfc_matrix) <- all_genes
+
+# Replace NAs with 0 for distance calculation
+lfc_matrix[is.na(lfc_matrix)] <- 0
+
+# Cosine similarity function
+cosine_sim <- function(mat) {
+  mat_norm <- sweep(mat, 2, sqrt(colSums(mat^2)), "/")
+  t(mat_norm) %*% mat_norm
+}
+
+sim_matrix <- cosine_sim(lfc_matrix)
+
+# Annotation: Gene KD vs Enhancer KD
+annot_col <- data.frame(
+  Type = ifelse(grepl("_Enh", colnames(sim_matrix)), "Enhancer KD", "Gene KD"),
+  row.names = colnames(sim_matrix)
+)
+
+annot_colors <- list(Type = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2"))
+
+pdf("./cross_perturbation_similarity.pdf", width = 7, height = 6, useDingbats = FALSE)
+pheatmap(sim_matrix,
+         color            = paletteContinuous("solarExtra"),
+         annotation_col   = annot_col,
+         annotation_colors = annot_colors,
+         border_color     = NA,
+         fontsize         = 8,
+         main             = "Cross-perturbation transcriptional similarity")
+dev.off()
+
+```
+
+```{r}
+### Enhancer-to-Gene Target Validation
+
+# Define your predicted enhancer -> gene pairs from scE2G/Hi-C
+# Edit this to match your actual predictions
+enh_gene_pairs <- data.frame(
+  enhancer   = c("ADAMTS7_Enh", "BMP1_Enh", "CFDP1_Enh", "COL4A1_Enh",
+                 "MAT2A_Enh",   "MRAS_Enh", "MYO9B_Enh", "TWIST1_Enh"),
+  target     = c("ADAMTS7",     "BMP1",     "CFDP1",     "COL4A1",
+                 "MAT2A",       "MRAS",     "MYO9B",     "TWIST1")
+)
+
+# For each enhancer KD, get rank of predicted target in DE list
+target_ranks <- lapply(1:nrow(enh_gene_pairs), function(i) {
+  enh    <- enh_gene_pairs$enhancer[i]
+  target <- enh_gene_pairs$target[i]
+  res    <- de_results[[enh]]
+  if (is.null(res)) return(NULL)
+  
+  # Rank by significance (ascending padj)
+  res_ranked <- res %>%
+    dplyr::filter(!is.na(padj)) %>%
+    dplyr::arrange(padj) %>%
+    dplyr::mutate(rank = dplyr::row_number(), n_genes = dplyr::n())
+  
+  target_row <- res_ranked %>% dplyr::filter(gene == target)
+  
+  data.frame(
+    enhancer      = enh,
+    target        = target,
+    target_rank   = ifelse(nrow(target_row) > 0, target_row$rank,    NA),
+    n_genes_tested = ifelse(nrow(target_row) > 0, target_row$n_genes, NA),
+    target_lfc    = ifelse(nrow(target_row) > 0, target_row$log2FoldChange, NA),
+    target_padj   = ifelse(nrow(target_row) > 0, target_row$padj, NA),
+    percentile    = ifelse(nrow(target_row) > 0, 
+                           1 - (target_row$rank / target_row$n_genes), NA)
+  )
+}) %>%
+  bind_rows()
+
+print(target_ranks)
+
+# Permutation null: for each enhancer KD, what rank would a random gene get?
+set.seed(42)
+n_perm <- 1000
+
+perm_ranks <- lapply(enh_gene_pairs$enhancer, function(enh) {
+  res <- de_results[[enh]]
+  if (is.null(res)) return(NULL)
+  res_ranked <- res %>% dplyr::filter(!is.na(padj)) %>% dplyr::arrange(padj)
+  sample(1:nrow(res_ranked), n_perm, replace = TRUE)
+}) 
+names(perm_ranks) <- enh_gene_pairs$enhancer
+
+# Plot observed rank vs null distribution
+pdf("./enhancer_target_rank_validation.pdf", width = 6, height = 4, useDingbats = FALSE)
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+for (i in 1:nrow(enh_gene_pairs)) {
+  enh  <- enh_gene_pairs$enhancer[i]
+  obs  <- target_ranks$target_rank[target_ranks$enhancer == enh]
+  null <- perm_ranks[[enh]]
+  if (is.null(null) || is.na(obs)) next
+  hist(null, breaks = 30, col = "grey80", border = NA,
+       main = enh, xlab = "Rank", cex.main = 0.8)
+  abline(v = obs, col = "red", lwd = 2)
+}
+dev.off()
+```
+# TF activity
+```{r}
+library(dorothea)
+
+# Load regulon directly from the package (no internet required)
+# Confidence levels A/B/C — A is highest quality
+net <- dorothea_hs %>%
+  dplyr::filter(confidence %in% c("A", "B", "C")) %>%
+  dplyr::rename(source = tf, mor = mor) %>%
+  dplyr::select(source, target, mor)
+
+# Verify it loaded
+head(net)
+dim(net)
+```
+
+```{r}
+tf_activity <- run_ulm(
+  mat     = lfc_matrix,
+  net     = net,
+  .source = "source",
+  .target = "target",
+  .mor    = "mor",
+  minsize = 5
+)
+
+# Check column names before pivoting
+head(tf_activity)
+colnames(tf_activity)
+```
+
+```{r}
+tf_mat <- tf_activity %>%
+  dplyr::filter(statistic == "ulm") %>%
+  dplyr::group_by(source, condition) %>%
+  dplyr::summarise(score = mean(score, na.rm = TRUE), .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = condition, values_from = score) %>%
+  tibble::column_to_rownames("source") %>%
+  as.matrix()
+
+# Sanity check
+dim(tf_mat)
+tf_mat[1:5, 1:5]
+```
+
+```{r}
+tf_var      <- apply(tf_mat, 1, var, na.rm = TRUE)
+tf_mat_filt <- tf_mat[tf_var > quantile(tf_var, 0.75, na.rm = TRUE), ]
+
+pdf("./tf_activity_heatmap.pdf", width = 8, height = 8, useDingbats = FALSE)
+pheatmap(tf_mat_filt,
+         color        = paletteContinuous("solarExtra"),
+         scale        = "row",
+         border_color = NA,
+         fontsize     = 7,
+         main         = "TF activity scores (dorothea ULM)")
+dev.off()
+```
+
+# TF Motif / Regulon Enrichment per Perturbation
+```{r}
+library(clusterProfiler)
+
+# Load TF target gene sets from MSigDB C3 (motif gene sets)
+msig_tf <- msigdbr(species = "Homo sapiens", category = "C3", subcategory = "TFT:GTRD") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+tf_enrichment <- lapply(names(de_results), function(pert) {
+  res <- de_results[[pert]]
+  if (is.null(res)) return(NULL)
+  
+  sig_genes <- res %>%
+    dplyr::filter(!is.na(padj), padj < 0.05, log2FoldChange < -0.25) %>%  # downregulated
+    dplyr::pull(gene)
+  
+  if (length(sig_genes) < 5) return(NULL)
+  
+  universe <- res$gene
+  
+  enrich_res <- enricher(
+    gene         = sig_genes,
+    universe     = universe,
+    TERM2GENE    = msig_tf,
+    pvalueCutoff = 0.05,
+    qvalueCutoff = 0.2
+  )
+  
+  if (is.null(enrich_res)) return(NULL)
+  
+  enrich_res@result %>%
+    dplyr::mutate(PERTURB = pert) %>%
+    dplyr::filter(p.adjust < 0.05) %>%
+    dplyr::slice_min(p.adjust, n = 10)
+}) %>%
+  bind_rows()
+
+# Dotplot
+pdf("./tf_motif_enrichment.pdf", width = 10, height = 8, useDingbats = FALSE)
+ggplot(tf_enrichment, aes(x = PERTURB, y = Description, 
+                           size = -log10(p.adjust), color = -log10(p.adjust))) +
+  geom_point() +
+  scale_color_viridis_c() +
+  theme_classic(base_size = 9) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = NULL, title = "TF motif enrichment (downregulated genes)")
+dev.off()
+```
+```{r}
+sub <- readRDS("sub_mixspace.rds")
+```
+
+```{r}
+# Alternative: write as h5ad via anndata R package
+library(anndata)
+
+# Extract sparse count matrix directly — no dense conversion
+counts_sparse <- GetAssayData(sub, assay = "RNA", slot = "counts")
+```
+
+```{r}
+adata <- AnnData(
+  X    = Matrix::t(counts_sparse),   # AnnData expects cells x genes
+  obs  = data.frame(barcode = colnames(counts_sparse), row.names = colnames(counts_sparse)),
+  var  = data.frame(gene    = rownames(counts_sparse), row.names = rownames(counts_sparse))
+)
+
+adata$write_h5ad("./cNMF/sub_counts.h5ad")
+```
+
+###### cNMF results
+```{r}
+sub <- readRDS("sub_mixspace.rds")
+```
+
+```{r}
+library(readr)
+library(dplyr)
+
+# Cell usage scores
+cnmf_usage <- read_tsv(
+  "./cNMF/cnmf_out/perturb_seq/perturb_seq.usages.k_8.dt_0_01.consensus.txt"
+) %>%
+  tibble::column_to_rownames(var = colnames(.)[1])
+
+colnames(cnmf_usage) <- paste0("cNMF_", 1:ncol(cnmf_usage))
+
+shared_cells <- intersect(rownames(cnmf_usage), colnames(sub))
+message(length(shared_cells), " / ", ncol(sub), " cells matched")
+
+cnmf_usage_matched <- cnmf_usage[shared_cells, ]
+
+# Add to sub metadata
+sub <- AddMetaData(sub, metadata = cnmf_usage_matched)
+
+# Gene spectra scores — note: no .consensus in filename
+cnmf_scores <- read_tsv(
+  "./cNMF/cnmf_out/perturb_seq/perturb_seq.gene_spectra_score.k_8.dt_0_01.txt"
+) %>%
+  tibble::column_to_rownames(var = colnames(.)[1])
+
+rownames(cnmf_scores) <- paste0("cNMF_", 1:nrow(cnmf_scores))
+
+# Top 20 genes per program
+top_genes_per_program <- apply(cnmf_scores, 1, function(x) {
+  names(sort(x, decreasing = TRUE))[1:20]
+})
+
+print(top_genes_per_program)
+```
+
+```{r}
+# Format for upload — programs x top 50 genes with scores
+cnmf_scores_export <- cnmf_scores
+
+# Add biological labels as a column
+program_labels <- c(
+  "cNMF_1" = "Inflammation",
+  "cNMF_2" = "ECM remodeling",
+  "cNMF_3" = "Proliferating (M phase)",
+  "cNMF_4" = "Vascular remodeling",
+  "cNMF_5" = "Proliferating (S phase)",
+  "cNMF_6" = "Interferon Responsive",
+  "cNMF_7" = "Excluded (technical)",
+  "cNMF_8" = "Excluded (technical)"
+)
+
+cnmf_scores_export <- as.data.frame(t(cnmf_scores)) %>%
+  tibble::rownames_to_column("gene")
+
+colnames(cnmf_scores_export)[-1] <- program_labels[colnames(cnmf_scores_export)[-1]]
+
+write.csv(cnmf_scores_export, "./cNMF/supp_table_cnmf_gene_scores.csv", row.names = FALSE)
+```
+
+
+```{r}
+library(pheatmap)
+cnmf_cols <- paste0("cNMF_", 1:6)  # adjust to your k
+
+# Mean usage per perturbation (KD cells only)
+cnmf_summary <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global == "KD") %>%
+  dplyr::group_by(PERTURB) %>%
+  dplyr::summarise(across(all_of(cnmf_cols), mean, na.rm = TRUE)) %>%
+  tibble::column_to_rownames("PERTURB") %>%
+  as.matrix()
+
+pdf("./cNMF/cnmf_program_heatmap.pdf", width = 6, height = 5, useDingbats = FALSE)
+pheatmap(t(cnmf_summary),
+         scale         = "row",
+         color         = paletteContinuous("solarExtra"),
+         border_color  = NA,
+         fontsize      = 8,
+         cluster_cols  = TRUE,
+         cluster_rows  = TRUE,
+         main          = "cNMF program usage per perturbation")
+dev.off()
+```
+
+```{r}
+FeaturePlot(sub, 
+            features   = cnmf_cols,
+            reduction  = "ldaumap",
+            ncol       = 4,
+            order      = TRUE,
+            cols       = c("lightgrey", "darkred"))
+```
+
+```{r}
+# Wilcoxon test per program per perturbation vs NT
+# (cell-level is acceptable here since we're testing usage scores, not expression)
+nt_usage <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global == "NT") %>%
+  dplyr::select(all_of(cnmf_cols))
+
+cnmf_stats <- lapply(all_perts, function(pert) {
+  pert_usage <- sub@meta.data %>%
+    dplyr::filter(PERTURB == pert, mixscape_class.global == "KD") %>%
+    dplyr::select(all_of(cnmf_cols))
+  
+  if (nrow(pert_usage) < 5) return(NULL)
+  
+  lapply(cnmf_cols, function(prog) {
+    wt <- wilcox.test(pert_usage[[prog]], nt_usage[[prog]])
+    data.frame(
+      PERTURB  = pert,
+      program  = prog,
+      p.value  = wt$p.value,
+      mean_kd  = mean(pert_usage[[prog]], na.rm = TRUE),
+      mean_nt  = mean(nt_usage[[prog]],  na.rm = TRUE),
+      delta    = mean(pert_usage[[prog]], na.rm = TRUE) - mean(nt_usage[[prog]], na.rm = TRUE)
+    )
+  }) %>% bind_rows()
+}) %>%
+  bind_rows() %>%
+  dplyr::mutate(padj = p.adjust(p.value, method = "BH"))
+
+# Dotplot of enriched programs
+sig_cnmf <- cnmf_stats %>% dplyr::filter(padj < 0.05)
+
+pdf("./cNMF/cnmf_program_dotplot.pdf", width = 7, height = 5, useDingbats = FALSE)
+ggplot(sig_cnmf, aes(x = PERTURB, y = program, size = -log10(padj), color = delta)) +
+  geom_point() +
+  scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_classic(base_size = 9) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = NULL, color = "Δ usage\n(KD - NT)", size = "-log10(padj)")
+dev.off()
+```
+
+
+```{r}
+library(clusterProfiler)
+library(msigdbr)
+
+# Gene sets to test against
+msig_h  <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, gene_symbol)
+msig_go <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
+  dplyr::select(gs_name, gene_symbol)
+gene_sets_df <- dplyr::bind_rows(msig_h, msig_go)
+
+# Convert to numeric matrix — critical fix
+cnmf_scores_mat <- as.matrix(cnmf_scores)
+storage.mode(cnmf_scores_mat) <- "numeric"
+
+# Run enrichment for each program using top 100 genes
+program_enrichment <- lapply(rownames(cnmf_scores_mat), function(prog) {
+  top_genes <- names(sort(cnmf_scores_mat[prog, ], decreasing = TRUE))[1:100]
+  
+  res <- enricher(
+    gene         = top_genes,
+    universe     = colnames(cnmf_scores_mat),
+    TERM2GENE    = gene_sets_df,
+    pvalueCutoff = 0.05,
+    qvalueCutoff = 0.2
+  )
+  
+  if (is.null(res)) return(NULL)
+  
+  res@result %>%
+    dplyr::filter(p.adjust < 0.05) %>%
+    dplyr::slice_min(p.adjust, n = 5) %>%
+    dplyr::mutate(program = prog)
+}) %>%
+  dplyr::bind_rows()
+
+print(program_enrichment %>% dplyr::select(program, Description, p.adjust))
+```
+
+```{r}
+# Relax thresholds to see what comes up
+program_enrichment_relaxed <- lapply(c("cNMF_7", "cNMF_8"), function(prog) {
+  top_genes <- names(sort(cnmf_scores_mat[prog, ], decreasing = TRUE))[1:200]  # expand to 200 genes
+  
+  res <- enricher(
+    gene         = top_genes,
+    universe     = colnames(cnmf_scores_mat),
+    TERM2GENE    = gene_sets_df,
+    pvalueCutoff = 0.2,       # relaxed
+    qvalueCutoff = 0.5        # relaxed
+  )
+  
+  if (is.null(res)) return(data.frame(program = prog, Description = "No enrichment", p.adjust = NA))
+  
+  res@result %>%
+    dplyr::slice_min(p.adjust, n = 10) %>%
+    dplyr::mutate(program = prog)
+}) %>%
+  dplyr::bind_rows()
+
+print(program_enrichment_relaxed %>% dplyr::select(program, Description, p.adjust))
+
+# Also just look at the raw top genes — often informative even without enrichment
+cat("Top 30 genes for cNMF_7:\n")
+print(names(sort(cnmf_scores_mat["cNMF_7", ], decreasing = TRUE))[1:30])
+
+cat("Top 30 genes for cNMF_8:\n")
+print(names(sort(cnmf_scores_mat["cNMF_8", ], decreasing = TRUE))[1:30])
+```
+
+```{r}
+cnmf_cols_clean <- c(
+  "Inflammation",
+  "ECM remodeling",
+  "Proliferating (M phase)",
+  "Vascular remodeling",
+  "Proliferating (S phase)",
+  "Interferon Responsive"
+)
+
+bio_labels <- c(
+  "Inflammation"             = "Inflammatory SMC",
+  "ECM remodeling"           = "ECM remodeling SMC",
+  "Proliferating (M phase)"  = "Proliferating SMC (M phase)",
+  "Vascular remodeling"      = "Vascular remodeling SMC",
+  "Proliferating (S phase)"  = "Proliferating SMC (S phase)",
+  "Interferon Responsive"    = "Interferon-stimulated SMC"
+)
+
+# Build summary matrix
+cnmf_summary <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global == "KD") %>%
+  dplyr::group_by(PERTURB) %>%
+  dplyr::summarise(across(all_of(cnmf_cols_clean), mean, na.rm = TRUE)) %>%
+  tibble::column_to_rownames("PERTURB") %>%
+  as.matrix()
+
+# Rename to biological labels for plotting
+colnames(cnmf_summary) <- bio_labels[colnames(cnmf_summary)]
+
+# Annotation: Gene KD vs Enhancer KD
+annot_row <- data.frame(
+  Type = ifelse(grepl("_Enh", rownames(cnmf_summary)), "Enhancer KD", "Gene KD"),
+  row.names = rownames(cnmf_summary)
+)
+
+# Heatmap
+pdf("./cNMF/cnmf_program_heatmap_annotated.pdf", width = 7, height = 5, useDingbats = FALSE)
+pheatmap(t(cnmf_summary),
+         scale             = "row",
+         color             = colorRampPalette(c("white", "red"))(100),
+         annotation_col    = annot_row,
+         annotation_colors = list(Type = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")),
+         border_color      = NA,
+         fontsize          = 8,
+         cluster_cols      = TRUE,
+         cluster_rows      = TRUE,
+         main              = "cNMF program usage per perturbation")
+dev.off()
+
+# UMAP
+library(patchwork)
+umap_plots <- lapply(cnmf_cols_clean, function(prog) {
+  FeaturePlot(sub,
+              features  = prog,
+              reduction = "ldaumap",
+              order     = TRUE,
+              cols      = c("lightgrey", "darkred")) +
+    ggtitle(bio_labels[prog]) +
+    theme(plot.title       = element_text(size = 8),
+          legend.key.size  = unit(0.3, "cm"),
+          legend.text      = element_text(size = 7))
+})
+
+pdf("./cNMF/cnmf_umap_programs.pdf", width = 13, height = 8, useDingbats = FALSE)
+wrap_plots(umap_plots, ncol = 3)
+dev.off()
+
+# Dotplot
+sig_cnmf <- cnmf_stats %>%
+  dplyr::filter(padj < 0.05, program %in% cnmf_cols_clean) %>%
+  dplyr::mutate(program_label = bio_labels[program])
+
+pdf("./cNMF/cnmf_program_dotplot.pdf", width = 7, height = 5, useDingbats = FALSE)
+ggplot(sig_cnmf, aes(x = PERTURB, y = program_label,
+                      size = -log10(padj), color = delta)) +
+  geom_point() +
+  scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_classic(base_size = 9) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x     = NULL,
+       y     = NULL,
+       color = "Δ usage\n(KD - NT)",
+       size  = "-log10(padj)")
+dev.off()
+```
+```{r}
+#The reference figure uses ComplexHeatmap which gives far more control over aesthetics than pheatmap. Here's the code to replicate that style:
+library(ComplexHeatmap)
+library(circlize)
+
+# Build summary matrix (perturbations x programs)
+cnmf_summary <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global == "KD") %>%
+  dplyr::group_by(PERTURB) %>%
+  dplyr::summarise(across(all_of(cnmf_cols_clean), mean, na.rm = TRUE)) %>%
+  tibble::column_to_rownames("PERTURB") %>%
+  as.matrix()
+
+# Rename columns to biological labels
+colnames(cnmf_summary) <- bio_labels[colnames(cnmf_summary)]
+
+# Scale across perturbations (z-score per program)
+cnmf_scaled <- scale(cnmf_summary)
+
+# Color scale: white to red
+col_fun <- colorRamp2(
+  c(min(cnmf_scaled, na.rm = TRUE), 0, max(cnmf_scaled, na.rm = TRUE)),
+  c("white", "white", "red")
+)
+
+# Top annotation: Gene KD vs Enhancer KD
+type_vec <- ifelse(grepl("_Enh", rownames(cnmf_scaled)), "Enhancer KD", "Gene KD")
+top_annot <- HeatmapAnnotation(
+  Type = type_vec,
+  col  = list(Type = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")),
+  annotation_label = "Type",
+  simple_anno_size = unit(3, "mm"),
+  show_legend = TRUE,
+  show_annotation_name = TRUE,
+  annotation_name_gp = gpar(fontsize = 8),
+  annotation_name_side = "left"
+)
+
+# Draw heatmap
+ht <- Heatmap(
+  t(cnmf_scaled),                        # programs x perturbations
+  name                  = "Program\ngene z score",
+  col                   = col_fun,
+  top_annotation        = top_annot,
+  cluster_rows          = TRUE,
+  cluster_columns       = TRUE,
+  show_row_dend         = FALSE,          # clean — no dendrograms
+  show_column_dend      = FALSE,
+  row_names_side        = "left",
+  row_names_gp          = gpar(fontsize = 9),
+  column_names_gp       = gpar(fontsize = 9),
+  column_names_rot      = 45,
+  border                = FALSE,
+  rect_gp               = gpar(col = "white", lwd = 0.5),  # thin white grid lines
+  heatmap_legend_param  = list(
+    title_gp      = gpar(fontsize = 8, fontface = "plain"),
+    labels_gp     = gpar(fontsize = 7),
+    legend_height = unit(3, "cm"),
+    border        = NA
+  )
+)
+
+pdf("./cNMF/cnmf_program_heatmap_annotated.pdf", width = 7, height = 3.5, useDingbats = FALSE)
+draw(ht, padding = unit(c(2, 2, 2, 2), "mm"))
+dev.off()
+```
+
+##### Coherent Analysis
+
+```{r}
+library(ComplexHeatmap)
+library(circlize)
+library(decoupleR)
+library(dorothea)
+
+# ── SHARED DEFINITIONS ────────────────────────────────────────────────────────
+
+cnmf_ids_clean <- c("cNMF_1", "cNMF_2", "cNMF_3", "cNMF_4", "cNMF_5", "cNMF_6")
+
+bio_labels <- c(
+  "cNMF_1" = "Inflammatory SMC",
+  "cNMF_2" = "ECM remodeling SMC",
+  "cNMF_3" = "Proliferating SMC (M phase)",
+  "cNMF_4" = "Vascular remodeling SMC",
+  "cNMF_5" = "Proliferating SMC (S phase)",
+  "cNMF_6" = "Interferon-stimulated SMC"
+)
+
+program_order <- unname(bio_labels[cnmf_ids_clean])
+
+# ── PANEL 1: Program gene specificity scores ──────────────────────────────────
+
+top_genes_list <- lapply(cnmf_ids_clean, function(prog) {
+  names(sort(cnmf_scores_mat[prog, ], decreasing = TRUE))[1:5]
+})
+names(top_genes_list) <- cnmf_ids_clean
+top_genes       <- unique(unlist(top_genes_list))
+top_genes_valid <- top_genes[top_genes %in% colnames(cnmf_scores_mat)]
+message(length(top_genes_valid), " / ", length(top_genes), " genes found")
+
+panel1_mat <- cnmf_scores_mat[cnmf_ids_clean, top_genes_valid]
+rownames(panel1_mat) <- bio_labels[rownames(panel1_mat)]
+
+panel1_scaled <- t(scale(t(panel1_mat)))
+panel1_scaled[is.na(panel1_scaled)]    <- 0
+panel1_scaled[panel1_scaled < 0]       <- 0
+
+col_fun1 <- colorRamp2(
+  c(0, max(panel1_scaled, na.rm = TRUE)),
+  c("white", "red")
+)
+
+ht1 <- Heatmap(
+  panel1_scaled,
+  name                 = "Program gene\nz score",
+  col                  = col_fun1,
+  cluster_rows         = TRUE,
+  cluster_columns      = FALSE,
+  show_row_dend        = FALSE,
+  show_column_dend     = FALSE,
+  row_names_side       = "left",
+  column_names_side    = "bottom",
+  row_names_gp         = gpar(fontsize = 8),
+  column_names_gp      = gpar(fontsize = 7),
+  column_names_rot     = 45,
+  border               = FALSE,
+  rect_gp              = gpar(col = "white", lwd = 0.5),
+  heatmap_legend_param = list(
+    title_gp      = gpar(fontsize = 7, fontface = "plain"),
+    labels_gp     = gpar(fontsize = 7),
+    legend_height = unit(2.5, "cm"),
+    border        = NA
+  )
+)
+
+# ── PANEL 2: TF motif enrichment per program ──────────────────────────────────
+
+msig_tf <- msigdbr(species = "Homo sapiens", category = "C3", subcategory = "TFT:GTRD") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+tf_motif_enrichment <- lapply(cnmf_ids_clean, function(prog) {
+  top100 <- names(sort(cnmf_scores_mat[prog, ], decreasing = TRUE))[1:100]
+  top100 <- top100[top100 %in% colnames(cnmf_scores_mat)]
+
+  res <- enricher(
+    gene         = top100,
+    universe     = colnames(cnmf_scores_mat),
+    TERM2GENE    = msig_tf,
+    pvalueCutoff = 1,
+    qvalueCutoff = 1
+  )
+  if (is.null(res)) return(NULL)
+
+  res@result %>%
+    dplyr::mutate(
+      program   = prog,
+      neg_log10 = -log10(p.adjust + 1e-10)
+    ) %>%
+    dplyr::select(program, Description, neg_log10)
+}) %>%
+  dplyr::bind_rows()
+
+top_motifs <- tf_motif_enrichment %>%
+  dplyr::group_by(Description) %>%
+  dplyr::summarise(max_score = max(neg_log10)) %>%
+  dplyr::slice_max(max_score, n = 20) %>%
+  dplyr::pull(Description)
+
+panel2_mat <- tf_motif_enrichment %>%
+  dplyr::filter(Description %in% top_motifs) %>%
+  tidyr::pivot_wider(names_from = Description, values_from = neg_log10, values_fill = 0) %>%
+  tibble::column_to_rownames("program") %>%
+  as.matrix()
+
+panel2_mat <- panel2_mat[cnmf_ids_clean[cnmf_ids_clean %in% rownames(panel2_mat)], ]
+rownames(panel2_mat) <- bio_labels[rownames(panel2_mat)]
+colnames(panel2_mat) <- gsub("_TARGET_GENES|GTRD_", "", colnames(panel2_mat))
+
+# Clean NAs/Infs
+panel2_mat[is.na(panel2_mat)]       <- 0
+panel2_mat[is.infinite(panel2_mat)] <- 0
+
+col_fun2 <- colorRamp2(
+  c(0, max(panel2_mat, na.rm = TRUE)),
+  c("white", "red")
+)
+
+ht2 <- Heatmap(
+  panel2_mat,
+  name                 = "-log10(FDR)",
+  col                  = col_fun2,
+  cluster_rows         = FALSE,
+  cluster_columns      = TRUE,
+  show_row_dend        = FALSE,
+  show_column_dend     = FALSE,
+  show_row_names       = FALSE,
+  column_names_side    = "bottom",
+  column_names_gp      = gpar(fontsize = 7),
+  column_names_rot     = 45,
+  border               = FALSE,
+  rect_gp              = gpar(col = "white", lwd = 0.5),
+  heatmap_legend_param = list(
+    title_gp      = gpar(fontsize = 7, fontface = "plain"),
+    labels_gp     = gpar(fontsize = 7),
+    legend_height = unit(2.5, "cm"),
+    border        = NA
+  )
+)
+
+# ── PANEL 3: TF activity per program (decoupleR) ──────────────────────────────
+
+# Build and clean input matrix
+cnmf_for_decoupler <- t(cnmf_scores_mat[cnmf_ids_clean, ])
+colnames(cnmf_for_decoupler) <- bio_labels[cnmf_ids_clean]
+
+message("NAs before cleaning:  ", sum(is.na(cnmf_for_decoupler)))
+message("Infs before cleaning: ", sum(is.infinite(cnmf_for_decoupler)))
+
+cnmf_for_decoupler[is.na(cnmf_for_decoupler)]       <- 0
+cnmf_for_decoupler[is.infinite(cnmf_for_decoupler)] <- 0
+
+# Remove all-zero rows
+nonzero_rows       <- rowSums(abs(cnmf_for_decoupler)) > 0
+cnmf_for_decoupler <- cnmf_for_decoupler[nonzero_rows, ]
+message("Dims after cleaning: ", paste(dim(cnmf_for_decoupler), collapse = " x "))
+
+# Load dorothea regulon
+net <- dorothea_hs %>%
+  dplyr::filter(confidence %in% c("A", "B", "C")) %>%
+  dplyr::select(tf, target, mor) %>%
+  dplyr::rename(source = tf)
+
+# Run ULM
+tf_act_programs <- run_ulm(
+  mat     = cnmf_for_decoupler,
+  net     = net,
+  .source = "source",
+  .target = "target",
+  .mor    = "mor",
+  minsize = 5
+)
+
+# Build output matrix
+panel3_mat <- tf_act_programs %>%
+  dplyr::filter(statistic == "ulm") %>%
+  dplyr::group_by(source, condition) %>%
+  dplyr::summarise(score = mean(score, na.rm = TRUE), .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = condition, values_from = score, values_fill = 0) %>%
+  tibble::column_to_rownames("source") %>%
+  as.matrix()
+
+# Clean output matrix
+panel3_mat[is.na(panel3_mat)]       <- 0
+panel3_mat[is.infinite(panel3_mat)] <- 0
+panel3_mat <- panel3_mat[apply(panel3_mat, 1, function(x) all(is.finite(x))), ]
+panel3_mat <- panel3_mat[, apply(panel3_mat, 2, function(x) all(is.finite(x)))]
+
+message("Dims after cleaning: ", paste(dim(panel3_mat), collapse = " x "))
+
+# Keep top variable TFs
+tf_var     <- apply(panel3_mat, 1, var, na.rm = TRUE)
+panel3_mat <- panel3_mat[tf_var > quantile(tf_var, 0.75, na.rm = TRUE), ]
+
+# Reorder columns to match program order
+panel3_mat <- panel3_mat[, program_order[program_order %in% colnames(panel3_mat)]]
+
+col_fun3 <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
+
+ht3 <- Heatmap(
+  t(panel3_mat),
+  name                 = "log2(fold change)",
+  col                  = col_fun3,
+  cluster_rows         = FALSE,
+  cluster_columns      = TRUE,
+  show_row_dend        = FALSE,
+  show_column_dend     = FALSE,
+  show_row_names       = FALSE,
+  column_names_side    = "bottom",
+  column_names_gp      = gpar(fontsize = 7),
+  column_names_rot     = 45,
+  border               = FALSE,
+  rect_gp              = gpar(col = "white", lwd = 0.5),
+  heatmap_legend_param = list(
+    title_gp      = gpar(fontsize = 7, fontface = "plain"),
+    labels_gp     = gpar(fontsize = 7),
+    legend_height = unit(2.5, "cm"),
+    border        = NA
+  )
+)
+
+# ── COMBINE ───────────────────────────────────────────────────────────────────
+
+pdf("./cNMF/cnmf_three_panel_heatmap.pdf", width = 16, height = 4, useDingbats = FALSE)
+draw(
+  ht1 + ht2 + ht3,
+  ht_gap      = unit(5, "mm"),
+  padding     = unit(c(2, 2, 5, 2), "mm"),
+  auto_adjust = FALSE
+)
+dev.off()
+```
+
+# FMC score
+```{r}
+FMC_geneSet <- read.table("./fibromyocyte_marker_genes.txt", header = FALSE, fill=TRUE)
+```
+
+```{r}
+DefaultAssay(sub) <- "RNA"
+sub <- AddModuleScore(
+	  object = sub,
+	  features = list(FMC_geneSet$V1),
+	  name = 'FMCScore'
+)
+```
+
+```{r}
+cnmf_cols_meta <- c(
+  "Inflammation",
+  "ECM remodeling",
+  "Proliferating (M phase)",
+  "Vascular remodeling",
+  "Proliferating (S phase)",
+  "Interferon Responsive"
+)
+
+# Map metadata names to display labels
+bio_labels_meta <- c(
+  "Inflammation"             = "Inflammatory SMC",
+  "ECM remodeling"           = "ECM remodeling SMC",
+  "Proliferating (M phase)"  = "Proliferating SMC (M phase)",
+  "Vascular remodeling"      = "Vascular remodeling SMC",
+  "Proliferating (S phase)"  = "Proliferating SMC (S phase)",
+  "Interferon Responsive"    = "Interferon-stimulated SMC"
+)
+
+fmc_col <- "FMCScore1"
+
+meta_sub <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global %in% c("KD", "NT")) %>%
+  dplyr::select(PERTURB, mixscape_class.global, all_of(fmc_col), all_of(cnmf_cols_meta))
+
+# ── PANEL A: Spearman correlation of each program with FMC score ──────────────
+
+program_fmc_cor <- lapply(cnmf_cols_meta, function(prog) {
+  ct <- cor.test(
+    meta_sub[[prog]],
+    meta_sub[[fmc_col]],
+    method = "spearman",
+    exact  = FALSE
+  )
+  data.frame(
+    program     = prog,
+    label       = bio_labels_meta[prog],
+    rho         = ct$estimate,
+    p.value     = ct$p.value,
+    neg_log10_p = -log10(ct$p.value)
+  )
+}) %>%
+  dplyr::bind_rows() %>%
+  dplyr::arrange(dplyr::desc(rho))
+
+print(program_fmc_cor)
+
+pdf("./cNMF/cnmf_fmc_correlation.pdf", width = 5, height = 3.5, useDingbats = FALSE)
+ggplot(program_fmc_cor,
+       aes(x = reorder(label, rho), y = rho, fill = rho)) +
+  geom_col() +
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")),
+            hjust = ifelse(program_fmc_cor$rho > 0, -0.3, 1.3),
+            size  = 5) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  coord_flip() +
+  labs(x = NULL, y = "Spearman ρ with FMC score", fill = "ρ") +
+  theme_classic(base_size = 9) +
+  theme(legend.position = "none")
+dev.off()
+
+# ── PANEL B: Per-perturbation scatter ─────────────────────────────────────────
+
+# Top correlated program from metadata column names
+top_program     <- program_fmc_cor$program[which.max(program_fmc_cor$rho)]
+top_program_lab <- bio_labels_meta[top_program]
+
+perturb_summary <- meta_sub %>%
+  dplyr::filter(mixscape_class.global == "KD") %>%
+  dplyr::group_by(PERTURB) %>%
+  dplyr::summarise(
+    mean_fmc     = mean(.data[[fmc_col]],    na.rm = TRUE),
+    mean_program = mean(.data[[top_program]], na.rm = TRUE),
+    n_cells      = dplyr::n()
+  ) %>%
+  dplyr::mutate(
+    type = ifelse(grepl("_Enh", PERTURB), "Enhancer KD", "Gene KD")
+  )
+
+library(ggrepel)
+
+pdf("./cNMF/cnmf_fmc_perturbation_scatter.pdf", width = 5, height = 4.5, useDingbats = FALSE)
+ggplot(perturb_summary,
+       aes(x = mean_fmc, y = mean_program, color = type, label = PERTURB)) +
+  geom_point(aes(size = n_cells)) +
+  geom_text_repel(size = 2.5, max.overlaps = 20) +
+  scale_color_manual(values = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")) +
+  scale_size_continuous(range = c(2, 6)) +
+  labs(
+    x     = "Mean FMC score",
+    y     = paste0("Mean ", top_program_lab, " usage"),
+    color = NULL,
+    size  = "N cells"
+  ) +
+  theme_classic(base_size = 9) +
+  theme(legend.position = "right")
+dev.off()
+
+# ── OPTIONAL: UMAP colored by FMC score ──────────────────────────────────────
+
+pdf("./cNMF/umap_fmc_score.pdf", width = 5, height = 4, useDingbats = FALSE)
+FeaturePlot(sub,
+            features  = fmc_col,
+            reduction = "ldaumap",
+            order     = TRUE,
+            cols      = c("lightgrey", "darkred")) +
+  ggtitle("Fibromyocyte score") +
+  theme(plot.title = element_text(size = 9))
+dev.off()
+
+# ── OPTIONAL: Violin of FMC score per perturbation ───────────────────────────
+
+meta_kd <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global == "KD") %>%
+  dplyr::mutate(
+    type = ifelse(grepl("_Enh", PERTURB), "Enhancer KD", "Gene KD")
+  )
+
+pdf("./cNMF/fmc_score_per_perturbation.pdf", width = 8, height = 4, useDingbats = FALSE)
+ggplot(meta_kd, aes(x = PERTURB, y = .data[[fmc_col]], fill = type)) +
+  geom_violin(scale = "width", trim = TRUE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.size = 0.3) +
+  scale_fill_manual(values = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")) +
+  labs(x = NULL, y = "FMC score", fill = NULL) +
+  theme_classic(base_size = 9) +
+  theme(axis.text.x  = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+dev.off()
+```
+
+```{r}
+in_vitro_SMC <- readRDS("/Users/jamrute/Desktop/Multiome_CAD_revisions/Tracy_Perturbseq/Perturb-seq/arrayed_pilot/Tracy_scRNA_TQ_pilot/SMC.rds")
+```
+
+```{r}
+Idents(in_vitro_SMC) <- "condition"
+in_vitro_SMC <- subset(in_vitro_SMC, idents = c("Zim3_ctrl","Zim3_3d3d"))
+```
+
+```{r}
+DefaultAssay(in_vitro_SMC) <- 'RNA'
+Idents(in_vitro_SMC) <- "condition"
+stim_de <- FindAllMarkers(in_vitro_SMC, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.25)
+```
+
+```{r}
+stim_de
+```
+
+
+```{r}
+library(fgsea)
+
+# ── DEFINE UP/DOWN GENE SETS ──────────────────────────────────────────────────
+
+de_results <- readRDS("de_results_deseq2.rds")
+
+# Zim3_3d3d = upregulated by stimulation
+# Zim3_ctrl  = downregulated by stimulation (higher in control)
+
+stim_up <- stim_de %>%
+  dplyr::filter(cluster == "Zim3_3d3d", p_val_adj < 0.05, avg_log2FC > 0.25) %>%
+  dplyr::pull(gene)
+
+stim_down <- stim_de %>%
+  dplyr::filter(cluster == "Zim3_ctrl", p_val_adj < 0.05, avg_log2FC > 0.25) %>%
+  dplyr::pull(gene)
+
+message(length(stim_up),   " stimulation-upregulated genes")
+message(length(stim_down), " stimulation-downregulated genes")
+
+# Build signed LFC vector for correlation analysis
+stim_lfc_signed <- stim_de %>%
+  dplyr::mutate(
+    lfc_signed = ifelse(cluster == "Zim3_3d3d", avg_log2FC, -avg_log2FC)
+  ) %>%
+  dplyr::filter(p_val_adj < 0.05) %>%
+  dplyr::group_by(gene) %>%
+  dplyr::slice_max(abs(lfc_signed), n = 1) %>%
+  dplyr::ungroup()
+
+stim_lfc_vec <- setNames(stim_lfc_signed$lfc_signed, stim_lfc_signed$gene)
+
+# ── ANALYSIS 1: LFC vector correlation ───────────────────────────────────────
+
+all_perturb_genes <- Reduce(union, lapply(de_results, function(x) if (!is.null(x)) x$gene))
+shared_genes      <- intersect(names(stim_lfc_vec), all_perturb_genes)
+message(length(shared_genes), " genes shared between stim DE and Perturb-seq DE")
+
+lfc_correlations <- lapply(names(de_results), function(pert) {
+  res <- de_results[[pert]]
+  if (is.null(res)) return(NULL)
+
+  genes_use    <- intersect(shared_genes, res$gene)
+  perturb_lfc  <- setNames(res$log2FoldChange, res$gene)[genes_use]
+  stim_lfc_sub <- stim_lfc_vec[genes_use]
+
+  keep         <- !is.na(perturb_lfc) & !is.na(stim_lfc_sub)
+  perturb_lfc  <- perturb_lfc[keep]
+  stim_lfc_sub <- stim_lfc_sub[keep]
+
+  ct <- cor.test(perturb_lfc, stim_lfc_sub, method = "spearman", exact = FALSE)
+
+  data.frame(
+    PERTURB = pert,
+    rho     = ct$estimate,
+    p.value = ct$p.value,
+    padj    = NA,
+    type    = ifelse(grepl("_Enh", pert), "Enhancer KD", "Gene KD"),
+    n_genes = sum(keep)
+  )
+}) %>%
+  dplyr::bind_rows() %>%
+  dplyr::mutate(padj = p.adjust(p.value, method = "BH")) %>%
+  dplyr::arrange(dplyr::desc(rho))
+
+print(lfc_correlations)
+
+pdf("./stim_lfc_correlation.pdf", width = 5, height = 4, useDingbats = FALSE)
+ggplot(lfc_correlations,
+       aes(x = reorder(PERTURB, rho), y = rho, fill = type)) +
+  geom_col() +
+  geom_text(
+    aes(label = ifelse(padj < 0.05, "*", "")),
+    hjust = ifelse(lfc_correlations$rho >= 0, -0.3, 1.3),
+    size  = 4
+  ) +
+  scale_fill_manual(values = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")) +
+  coord_flip() +
+  labs(
+    x    = NULL,
+    y    = "Spearman ρ with stimulated SMC LFC",
+    fill = NULL
+  ) +
+  theme_classic(base_size = 9) +
+  theme(legend.position = "top")
+dev.off()
+```
+
+
+```{r}
+# ── ANALYSIS 3: Stim module score per perturbation ───────────────────────────
+
+DefaultAssay(sub) <- "RNA"
+sub <- AddModuleScore(sub, features = list(stim_up),   name = "StimUp")
+sub <- AddModuleScore(sub, features = list(stim_down), name = "StimDown")
+sub$StimScore <- sub$StimUp1 - sub$StimDown1
+
+stim_score_summary <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global == "KD") %>%
+  dplyr::group_by(PERTURB) %>%
+  dplyr::summarise(
+    mean_stim = mean(StimScore, na.rm = TRUE),
+    se_stim   = sd(StimScore,  na.rm = TRUE) / sqrt(dplyr::n()),
+    n_cells   = dplyr::n()
+  ) %>%
+  dplyr::mutate(type = ifelse(grepl("_Enh", PERTURB), "Enhancer KD", "Gene KD")) %>%
+  dplyr::arrange(dplyr::desc(mean_stim))
+
+pdf("./stim_score_per_perturbation.pdf", width = 5, height = 4, useDingbats = FALSE)
+ggplot(stim_score_summary,
+       aes(x = reorder(PERTURB, mean_stim), y = mean_stim, fill = type)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = mean_stim - se_stim, ymax = mean_stim + se_stim),
+                width = 0.3) +
+  scale_fill_manual(values = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")) +
+  coord_flip() +
+  labs(x = NULL, y = "Mean stimulation score", fill = NULL) +
+  theme_classic(base_size = 9) +
+  theme(legend.position = "top")
+dev.off()
+
+# ── ANALYSIS 4: FMC score vs Stim score correlation across cells ──────────────
+
+cor_fmc_stim <- cor.test(sub$FMCScore1, sub$StimScore, method = "spearman", exact = FALSE)
+message("FMC vs Stim: rho = ", round(cor_fmc_stim$estimate, 3),
+        ", p = ",               signif(cor_fmc_stim$p.value, 3))
+
+set.seed(42)
+cells_plot <- sample(colnames(sub), min(10000, ncol(sub)))
+meta_plot  <- sub@meta.data[cells_plot, ]
+
+pdf("./fmc_vs_stim_scatter.pdf", width = 4.5, height = 4, useDingbats = FALSE)
+ggplot(meta_plot, aes(x = FMCScore1, y = StimScore)) +
+  geom_point(size = 0.2, alpha = 0.2, color = "grey60") +
+  geom_smooth(method = "lm", color = "red", linewidth = 0.8, se = TRUE) +
+  annotate("text", x = Inf, y = Inf,
+           label = paste0("ρ = ", round(cor_fmc_stim$estimate, 2),
+                          "\np = ", signif(cor_fmc_stim$p.value, 2)),
+           hjust = 1.1, vjust = 1.5, size = 3) +
+  labs(x = "FMC score", y = "Stimulation score") +
+  theme_classic(base_size = 9)
+dev.off()
+
+# ── ANALYSIS 5: 2D scatter — FMC score vs Stim score per perturbation ─────────
+
+perturb_2d <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global == "KD") %>%
+  dplyr::group_by(PERTURB) %>%
+  dplyr::summarise(
+    mean_fmc  = mean(FMCScore1, na.rm = TRUE),
+    mean_stim = mean(StimScore, na.rm = TRUE),
+    n_cells   = dplyr::n()
+  ) %>%
+  dplyr::mutate(type = ifelse(grepl("_Enh", PERTURB), "Enhancer KD", "Gene KD"))
+
+library(ggrepel)
+
+pdf("./fmc_stim_perturbation_2d.pdf", width = 5, height = 5, useDingbats = FALSE)
+ggplot(perturb_2d,
+       aes(x = mean_fmc, y = mean_stim, color = type, label = PERTURB)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey70") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey70") +
+  geom_point(aes(size = n_cells)) +
+  geom_text_repel(size = 2.5, max.overlaps = 20) +
+  scale_color_manual(values = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")) +
+  scale_size_continuous(range = c(2, 6)) +
+  labs(
+    x     = "Mean FMC score",
+    y     = "Mean stimulation score",
+    color = NULL,
+    size  = "N cells"
+  ) +
+  theme_classic(base_size = 9) +
+  theme(legend.position = "right")
+dev.off()
+```
+
+```{r}
+de_results <- readRDS("de_results_deseq2.rds")
+sub <- readRDS("sub_mixspace.rds")
+```
+
+```{r}
+convergent <- readRDS("/Users/jamrute/Desktop/Multiome_CAD_revisions/Tracy_Perturbseq/Perturb-seq/arrayed_Perturbseq/cNMF/convergent/convergent_genes.rds")
+```
+
+```{r}
+write.csv(convergent,
+          "./cNMF/convergent/RRA_converging_genes.csv",
+          row.names = FALSE)
+
+```
+
+
+```{r}
+library(RobustRankAggreg)
+library(ComplexHeatmap)
+library(circlize)
+library(ggrepel)
+library(clusterProfiler)
+library(msigdbr)
+
+dir.create("./convergent", showWarnings = FALSE)
+
+# ── STEP 1: RANK AGGREGATION ──────────────────────────────────────────────────
+
+ranked_up <- lapply(names(de_results), function(pert) {
+  res <- de_results[[pert]]
+  if (is.null(res)) return(NULL)
+  res %>%
+    dplyr::filter(!is.na(padj), !is.na(log2FoldChange), log2FoldChange > 0) %>%
+    dplyr::arrange(padj) %>%
+    dplyr::pull(gene)
+})
+names(ranked_up) <- names(de_results)
+ranked_up <- ranked_up[!sapply(ranked_up, is.null)]
+
+ranked_down <- lapply(names(de_results), function(pert) {
+  res <- de_results[[pert]]
+  if (is.null(res)) return(NULL)
+  res %>%
+    dplyr::filter(!is.na(padj), !is.na(log2FoldChange), log2FoldChange < 0) %>%
+    dplyr::arrange(padj) %>%
+    dplyr::pull(gene)
+})
+names(ranked_down) <- names(de_results)
+ranked_down <- ranked_down[!sapply(ranked_down, is.null)]
+
+agg_up   <- aggregateRanks(ranked_up,   method = "RRA")
+agg_down <- aggregateRanks(ranked_down, method = "RRA")
+
+agg_up$direction   <- "Up"
+agg_down$direction <- "Down"
+agg_up$padj        <- p.adjust(agg_up$Score,   method = "BH")
+agg_down$padj      <- p.adjust(agg_down$Score, method = "BH")
+
+convergent_genes <- dplyr::bind_rows(
+  agg_up   %>% dplyr::filter(padj < 0.05) %>% dplyr::rename(gene = Name),
+  agg_down %>% dplyr::filter(padj < 0.05) %>% dplyr::rename(gene = Name)
+) %>%
+  # Deduplicate — keep direction with better RRA score
+  dplyr::group_by(gene) %>%
+  dplyr::slice_min(Score, n = 1) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(Score)
+
+message(nrow(convergent_genes), " convergent genes identified")
+print(head(convergent_genes, 20))
+saveRDS(convergent_genes, "convergent_genes.rds")
+
+# ── STEP 2: CONVERGENCE SCORE PER GENE ───────────────────────────────────────
+
+top_genes_conv <- convergent_genes$gene[1:min(50, nrow(convergent_genes))]
+
+convergence_counts <- lapply(top_genes_conv, function(g) {
+  n_sig <- sum(sapply(de_results, function(res) {
+    if (is.null(res)) return(FALSE)
+    row <- res %>% dplyr::filter(gene == g)
+    if (nrow(row) == 0) return(FALSE)
+    !is.na(row$padj) && row$padj < 0.05
+  }))
+  data.frame(gene = g, n_perturbations = n_sig)
+}) %>%
+  dplyr::bind_rows() %>%
+  dplyr::left_join(
+    convergent_genes %>% dplyr::select(gene, direction, Score),
+    by = "gene"
+  ) %>%
+  # Deduplicate — keep dominant direction per gene
+  dplyr::group_by(gene) %>%
+  dplyr::slice_min(Score, n = 1) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(dplyr::desc(n_perturbations))
+
+print(head(convergence_counts, 20))
+
+# ── STEP 3: BUILD LFC MATRIX ─────────────────────────────────────────────────
+
+top_conv <- convergence_counts %>%
+  dplyr::slice_max(n_perturbations, n = 30) %>%
+  dplyr::pull(gene)
+
+lfc_conv_mat <- sapply(names(de_results), function(pert) {
+  res <- de_results[[pert]]
+  if (is.null(res)) return(rep(NA, length(top_conv)))
+  lfc <- setNames(res$log2FoldChange, res$gene)
+  lfc[top_conv]
+})
+rownames(lfc_conv_mat) <- top_conv
+lfc_conv_mat[is.na(lfc_conv_mat)] <- 0
+
+# ── STEP 4: PATHWAY ENRICHMENT ───────────────────────────────────────────────
+
+msig_h  <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, gene_symbol)
+msig_go <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
+  dplyr::select(gs_name, gene_symbol)
+gene_sets_df <- dplyr::bind_rows(msig_h, msig_go)
+
+conv_up_genes   <- convergent_genes %>% dplyr::filter(direction == "Up")   %>% dplyr::pull(gene)
+conv_down_genes <- convergent_genes %>% dplyr::filter(direction == "Down") %>% dplyr::pull(gene)
+universe        <- Reduce(union, lapply(de_results, function(x) if (!is.null(x)) x$gene))
+
+enrich_up <- enricher(
+  gene         = conv_up_genes,
+  universe     = universe,
+  TERM2GENE    = gene_sets_df,
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2
+)
+
+enrich_down <- enricher(
+  gene         = conv_down_genes,
+  universe     = universe,
+  TERM2GENE    = gene_sets_df,
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.2
+)
+
+top_pathways_up <- if (!is.null(enrich_up)) {
+  enrich_up@result %>%
+    dplyr::filter(p.adjust < 0.05) %>%
+    dplyr::slice_min(p.adjust, n = 10) %>%
+    dplyr::mutate(direction = "Up", neg_log10 = -log10(p.adjust))
+} else NULL
+
+top_pathways_down <- if (!is.null(enrich_down)) {
+  enrich_down@result %>%
+    dplyr::filter(p.adjust < 0.05) %>%
+    dplyr::slice_min(p.adjust, n = 10) %>%
+    dplyr::mutate(direction = "Down", neg_log10 = -log10(p.adjust))
+} else NULL
+
+top_pathways <- dplyr::bind_rows(top_pathways_up, top_pathways_down)
+
+# ── STEP 5: PANEL A — Convergence bar chart ───────────────────────────────────
+
+conv_plot_data <- convergence_counts %>%
+  dplyr::slice_max(n_perturbations, n = 25) %>%
+  dplyr::mutate(
+    direction = factor(direction, levels = c("Up", "Down")),
+    gene      = reorder(gene, n_perturbations)
+  )
+
+pA <- ggplot(conv_plot_data,
+             aes(x = gene, y = n_perturbations, fill = direction)) +
+  geom_col() +
+  scale_fill_manual(values = c("Up" = "#D62728", "Down" = "#1F77B4")) +
+  coord_flip() +
+  labs(
+    x     = NULL,
+    y     = "Number of perturbations",
+    fill  = NULL,
+    title = "Convergent gene program"
+  ) +
+  theme_classic(base_size = 9) +
+  theme(
+    legend.position = "top",
+    plot.title      = element_text(face = "bold", size = 10)
+  )
+
+pdf("./convergent/panelA_convergence_bar.pdf", width = 4, height = 6, useDingbats = FALSE)
+print(pA)
+dev.off()
+
+# ── STEP 6: PANEL B — LFC heatmap ────────────────────────────────────────────
+
+col_fun_lfc <- colorRamp2(c(-2, 0, 2), c("#1F77B4", "white", "#D62728"))
+
+# Row annotation — deduplicated direction per gene
+row_dir <- convergence_counts %>%
+  dplyr::filter(gene %in% top_conv) %>%
+  dplyr::select(gene, direction) %>%
+  dplyr::group_by(gene) %>%
+  dplyr::slice(1) %>%
+  dplyr::ungroup() %>%
+  tibble::column_to_rownames("gene")
+row_dir <- row_dir[top_conv, , drop = FALSE]
+
+# Column annotation
+col_type <- data.frame(
+  Type = ifelse(grepl("_Enh", colnames(lfc_conv_mat)), "Enhancer KD", "Gene KD"),
+  row.names = colnames(lfc_conv_mat)
+)
+
+row_annot <- rowAnnotation(
+  Direction = row_dir$direction,
+  col       = list(Direction = c("Up" = "#D62728", "Down" = "#1F77B4")),
+  show_annotation_name = FALSE,
+  simple_anno_size     = unit(3, "mm")
+)
+
+col_annot <- HeatmapAnnotation(
+  Type = col_type$Type,
+  col  = list(Type = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")),
+  simple_anno_size     = unit(3, "mm"),
+  show_annotation_name = FALSE
+)
+
+htB <- Heatmap(
+  lfc_conv_mat,
+  name                 = "log2FC",
+  col                  = col_fun_lfc,
+  top_annotation       = col_annot,
+  left_annotation      = row_annot,
+  cluster_rows         = TRUE,
+  cluster_columns      = TRUE,
+  show_row_dend        = FALSE,
+  show_column_dend     = FALSE,
+  row_names_side       = "right",
+  column_names_side    = "bottom",
+  row_names_gp         = gpar(fontsize = 7),
+  column_names_gp      = gpar(fontsize = 7),
+  column_names_rot     = 45,
+  border               = FALSE,
+  rect_gp              = gpar(col = "white", lwd = 0.5),
+  heatmap_legend_param = list(
+    title_gp      = gpar(fontsize = 7),
+    labels_gp     = gpar(fontsize = 7),
+    legend_height = unit(2.5, "cm"),
+    border        = NA
+  )
+)
+
+pdf("./convergent/panelB_lfc_heatmap.pdf", width = 8, height = 6, useDingbats = FALSE)
+draw(htB, padding = unit(c(2, 2, 2, 2), "mm"))
+dev.off()
+
+# ── STEP 7: PANEL C — Pathway enrichment lollipop ────────────────────────────
+
+pC <- ggplot(top_pathways,
+             aes(x = reorder(Description, neg_log10),
+                 y = neg_log10, color = direction)) +
+  geom_segment(aes(xend = Description, yend = 0), linewidth = 0.6) +
+  geom_point(aes(size = Count)) +
+  scale_color_manual(values = c("Up" = "#D62728", "Down" = "#1F77B4")) +
+  scale_size_continuous(range = c(2, 6)) +
+  coord_flip() +
+  labs(
+    x     = NULL,
+    y     = "-log10(adjusted p)",
+    color = NULL,
+    size  = "Gene count",
+    title = "Convergent program\npathway enrichment"
+  ) +
+  theme_classic(base_size = 9) +
+  theme(
+    legend.position = "right",
+    plot.title      = element_text(face = "bold", size = 10)
+  )
+
+pdf("./convergent/panelC_pathway_enrichment.pdf", width = 6, height = 5, useDingbats = FALSE)
+print(pC)
+dev.off()
+
+# ── STEP 8: UMAP + per-perturbation convergent score ─────────────────────────
+
+DefaultAssay(sub) <- "RNA"
+sub <- AddModuleScore(
+  sub,
+  features = list(conv_up_genes, conv_down_genes),
+  name     = "ConvergentProgram"
+)
+sub$ConvergentScore <- sub$ConvergentProgram1 - sub$ConvergentProgram2
+
+pdf("./convergent/umap_convergent_score.pdf", width = 5, height = 4, useDingbats = FALSE)
+FeaturePlot(sub,
+            features  = "ConvergentScore",
+            reduction = "ldaumap",
+            order     = TRUE,
+            cols      = c("#1F77B4", "white", "#D62728")) +
+  ggtitle("Convergent CAD gene program score") +
+  theme(plot.title = element_text(size = 9, face = "bold"))
+dev.off()
+
+conv_score_summary <- sub@meta.data %>%
+  dplyr::filter(mixscape_class.global == "KD") %>%
+  dplyr::group_by(PERTURB) %>%
+  dplyr::summarise(
+    mean_score = mean(ConvergentScore, na.rm = TRUE),
+    se_score   = sd(ConvergentScore,  na.rm = TRUE) / sqrt(dplyr::n()),
+    n_cells    = dplyr::n()
+  ) %>%
+  dplyr::mutate(type = ifelse(grepl("_Enh", PERTURB), "Enhancer KD", "Gene KD")) %>%
+  dplyr::arrange(dplyr::desc(mean_score))
+
+pdf("./convergent/convergent_score_per_perturbation.pdf", width = 5, height = 4, useDingbats = FALSE)
+ggplot(conv_score_summary,
+       aes(x = reorder(PERTURB, mean_score), y = mean_score, fill = type)) +
+  geom_col() +
+  geom_errorbar(
+    aes(ymin = mean_score - se_score, ymax = mean_score + se_score),
+    width = 0.3
+  ) +
+  scale_fill_manual(values = c("Gene KD" = "steelblue", "Enhancer KD" = "coral2")) +
+  coord_flip() +
+  labs(x = NULL, y = "Mean convergent program score", fill = NULL) +
+  theme_classic(base_size = 9) +
+  theme(legend.position = "top")
+dev.off()
+```
+
+
+```{r}
+Idents(sample) <- "PERTURB"
+sample <- subset(sample, idents = c("NT","ADAMTS7","ADAMTS7_Enh"))
+```
+
+```{r}
+Idents(sample) <- "crispr"
+counts_df <- AverageExpression(sample, features = c("ADAMTS7","MORF4L1"), group.by = "PERTURB")$RNA
+counts_filtered_df <- counts_df[apply(counts_df, MARGIN = 1, FUN = function(x) sd(x) != 0),]
+
+library(pheatmap)
+library(ArchR)
+#pdf("./heatmap_perturbed_genes.pdf", useDingbats = FALSE, width=5, height=2.5)
+pheatmap(counts_filtered_df[c("ADAMTS7","MORF4L1"),], cluster_cols = FALSE, cluster_rows = FALSE, scale = "row", border_color = NA, col=paletteContinuous("solarExtra"), fontsize = 7)
+#dev.off()
+```
+
+
+
+
+
