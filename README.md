@@ -83,8 +83,7 @@ External datasets used: GSE131780, GSE175621, GSE188422, GTEx v8, 1000 Genomes P
 
 See [`CITATION.cff`](CITATION.cff).
 
-Correspondence: Junedh Amrute (junedh.amrute@mdc-berlin.de, jamrute@wustl.edu) and
-Nathan O. Stitziel (nstitziel@wustl.edu).
+Correspondence: junedh.amrute@mdc-berlin.de and jamrute@wustl.edu
 
 ## License
 
